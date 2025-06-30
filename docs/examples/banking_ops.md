@@ -28,12 +28,13 @@ This network organizes its intelligence into nested layers, with specialized age
 
 ### Human
 
-
+```text
 I’m planning to invest $5,000 every month for the next 12 months. Can you suggest a strategy for moderate risk
 profile? Additionally, please provide guidelines on how to avoid investment fraud and identify red flags?
+```
 
 ### AI (Airline Policy 360 Assistant)
-
+```text
 Here's a comprehensive response based on the input from relevant specialists:
 
 ### Moderate Risk Investment Strategy
@@ -64,7 +65,7 @@ Here are guidelines to help you avoid investment fraud and recognize red flags:
 7. **Consult a Professional**: Seek advice from a certified financial advisor for an impartial assessment.
 
 If you have specific investments in mind or need further customization of the strategy, feel free to reach out for more detailed guidance!
-
+```
 ---
 
 ## Architecture Overview
