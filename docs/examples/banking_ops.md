@@ -1,4 +1,4 @@
-#Banking Operations & Compliance Assistant
+# Banking Operations & Compliance Assistant
 
 The **Banking Operations & Compliance Assistant** is a hierarchical structured multi-agent system designed to simulate a 
 complete banking customer support organization.  full-service banking helpdesk 
