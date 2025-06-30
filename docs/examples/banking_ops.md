@@ -44,12 +44,16 @@ For a moderate risk profile, a balanced investment strategy is key. Here's a sug
 1. Diversified Portfolio: 
    - Equities: Allocate around 50-60% to a mix of stocks, including domestic and international options. Consider
 large-cap, mid-cap, and small-cap equities.
-   - Bonds: Allocate 25-40% to bonds, including government and corporate bonds with various maturities to provide stability and income.
-   - Real Estate or REITs: Consider allocating 10-20% to real estate investment trusts (REITs) or real estate funds for additional income streams.
-   - Alternative Investments: Consider a small allocation (5-10%) to alternatives like commodities or other instruments that align with your financial goals.
+   - Bonds: Allocate 25-40% to bonds, including government and corporate bonds with various maturities to provide
+stability and income.
+   - Real Estate or REITs: Consider allocating 10-20% to real estate investment trusts (REITs) or real estate funds
+for additional income streams.
+   - Alternative Investments: Consider a small allocation (5-10%) to alternatives like commodities or other
+instruments that align with your financial goals.
 
 2. Investment Techniques:
-   - Dollar-Cost Averaging: Your plan to invest $5,000 monthly employs dollar-cost averaging, which helps mitigate the impact of market volatility.
+   - Dollar-Cost Averaging: Your plan to invest $5,000 monthly employs dollar-cost averaging, which helps mitigate
+the impact of market volatility.
    - Rebalancing: Periodically review and adjust your portfolio to maintain your desired risk level and asset allocation.
 
 3. Professional Advice: 
