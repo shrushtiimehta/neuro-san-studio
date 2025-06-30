@@ -1,8 +1,9 @@
 # Banking Operations & Compliance Assistant
 
-The Banking Operations & Compliance Assistant is a hierarchical structured multi-agent system designed to simulate a 
-complete banking customer support organization.  full-service banking helpdesk 
-with coverage for customer account management, fraud investigation, personal and business loans, wealth management, and investment advisory services.
+The **Banking Operations & Compliance Assistant** is a hierarchically organized multi-agent system that simulates a full-spectrum 
+banking support framework, covering areas such as account servicing, fraud detection, credit underwriting, wealth management, and 
+investment advisory. It leverages specialized agents to perform domain-specific tasks, enabling coordinated, context-aware outputs 
+across diverse financial operations.
 
 
 ---
@@ -15,12 +16,12 @@ with coverage for customer account management, fraud investigation, personal and
 
 ## Description
 
-This network organizes its intelligence into nested layers, with specialized agents collaborating to resolve customer inquiries. A central Customer Service Representative receives and parses incoming questions, dispatches relevant portions to subject matter agents, and collates the final output for the end user.
+This network organizes its intelligence into nested layers, with specialized agents collaborating to resolve customer inquiries. A central Customer Service Representative (top-level "front-man" agent) receives and parses incoming questions, dispatches relevant portions to subject matter agents, and collates the final output for the end user while maintaining clarity and helpfulness.
 
-- Task Routing by Expertise: Each agent is domain-specific and may offload subtasks to its own subordinate agents, mirroring how departments operate in an actual bank.
-- Unified Conversational Front: Despite its internal complexity, the system presents a single, coherent voice to the customer through its top-level representative.
-- Interactive Follow-ups: Agents may request additional user input before responding, using clearly formatted, human-friendly prompts.
-- Expandable Structure: Adding new banking functions (e.g., insurance, tax advisory) is as simple as plugging in new agents and updating tool references.
+- **Domain Expertise Delegation**: Each agent is domain-specific and may offload subtasks to its own subordinate agents, mirroring how departments operate in an actual bank.
+- **Human-like Dialogue Management**: The front-man agent ensures a smooth, conversational experience by abstracting the underlying agent collaboration from the user.
+- **Interactive Follow-ups**: Agents may request additional user input before responding, using clearly formatted, human-friendly prompts.
+- **Expandable Structure**: Adding new banking functions (e.g., insurance, tax advisory) is as simple as plugging in new agents and updating tool references.
 
 ---
 
@@ -79,6 +80,7 @@ transactions.
 If you have specific investments in mind or need further customization of the strategy, feel free to reach out
 for more detailed guidance!
 ```
+
 ---
 
 ## Architecture Overview
@@ -113,4 +115,15 @@ for more detailed guidance!
      - `Underwriter`
      - `Mortgage Specialist`
      - `Business Banking Officer`
+    
+---
+
+## Debugging Hints
+
+Check the logs for:
+
+- Correct routing of inquiries to appropriate domain-specific agents.
+- Verify that sub-agents requested all necessary input parameters before producing a response.
+
+---
 
