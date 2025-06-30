@@ -35,7 +35,9 @@ profile? Additionally, please provide guidelines on how to avoid investment frau
 
 ### AI (Airline Policy 360 Assistant)
 
-```text
+```markdown
+Here's a comprehensive response based on the input from relevant specialists:
+
 ### Moderate Risk Investment Strategy
 For a moderate risk profile, a balanced investment strategy is key. Here's a suggested approach:
 
