@@ -2,7 +2,8 @@
 
 The **Banking Operations & Compliance Assistant** is a hierarchically organized multi-agent system that simulates a full-spectrum 
 banking support framework across account servicing, fraud detection, credit underwriting, wealth management, and investment 
-advisory. The system currently operates in demo mode and can be grounded in real data and systems as needed.
+advisory. Specialized agents coordinate to deliver precise, compliant, and context-aware outputs across banking functions. 
+The system currently operates in demo mode and can be grounded in real data and systems as needed.
 
 ---
 
