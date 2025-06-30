@@ -36,49 +36,34 @@ profile? Additionally, please provide guidelines on how to avoid investment frau
 ### AI (Airline Policy 360 Assistant)
 
 ```text
-Here's a comprehensive response based on the input from relevant specialists:
-
-Moderate Risk Investment Strategy
-
+### Moderate Risk Investment Strategy
 For a moderate risk profile, a balanced investment strategy is key. Here's a suggested approach:
 
-   1. Diversified Portfolio: 
-      - Equities: Allocate around 50-60% to a mix of stocks, including domestic and international options.
-   Consider large-cap, mid-cap, and small-cap equities.
-      - Bonds: Allocate 25-40% to bonds, including government and corporate bonds with various maturities
-   to provide stability and income.
-      - Real Estate or REITs: Consider allocating 10-20% to real estate investment trusts (REITs) or real
-   estate funds for additional income streams.
-      - Alternative Investments: Consider a small allocation (5-10%) to alternatives like commodities or
-   other instruments that align with your financial goals.
-   
-   2. Investment Techniques:
-      - Dollar-Cost Averaging: Your plan to invest $5,000 monthly employs dollar-cost averaging, which
-   helps mitigate the impact of market volatility.
-      - Rebalancing: Periodically review and adjust your portfolio to maintain your desired risk level and
-   asset allocation.
-   
-   3. Professional Advice: 
-      - Consulting a financial advisor can provide personalized insights tailored to your specific financial
-   situation and goals.
+1. **Diversified Portfolio**: 
+   - **Equities**: Allocate around 50-60% to a mix of stocks, including domestic and international options. Consider large-cap, mid-cap, and small-cap equities.
+   - **Bonds**: Allocate 25-40% to bonds, including government and corporate bonds with various maturities to provide stability and income.
+   - **Real Estate or REITs**: Consider allocating 10-20% to real estate investment trusts (REITs) or real estate funds for additional income streams.
+   - **Alternative Investments**: Consider a small allocation (5-10%) to alternatives like commodities or other instruments that align with your financial goals.
 
-Guidelines to Avoid Investment Fraud
+2. **Investment Techniques**:
+   - **Dollar-Cost Averaging**: Your plan to invest $5,000 monthly employs dollar-cost averaging, which helps mitigate the impact of market volatility.
+   - **Rebalancing**: Periodically review and adjust your portfolio to maintain your desired risk level and asset allocation.
 
+3. **Professional Advice**: 
+   - Consulting a financial advisor can provide personalized insights tailored to your specific financial situation and goals.
+
+### Guidelines to Avoid Investment Fraud
 Here are guidelines to help you avoid investment fraud and recognize red flags:
 
-   1. Verify Credentials: Ensure that any financial advisor or investment firm is registered with regulatory
-   bodies such as the SEC or FINRA.
-   2. Conduct Thorough Research: Understand the investment thoroughly, including business models and involved
-   parties.
-   3. Be Wary of Unsolicited Offers: Avoid offers that use high-pressure sales tactics or promise guaranteed
-   high returns with little risk.
-   4. Check Regulatory Compliance: Verify the registration and licensing of the investment and the offering entity.
-   5. Demand Transparency: Legitimate investments provide clear, detailed information about terms and risks.
-   6. Monitor Accounts Regularly: Regularly review your accounts to ensure there are no unauthorized transactions.
-   7. Consult a Professional: Seek advice from a certified financial advisor for an impartial assessment.
+1. **Verify Credentials**: Ensure that any financial advisor or investment firm is registered with regulatory bodies such as the SEC or FINRA.
+2. **Conduct Thorough Research**: Understand the investment thoroughly, including business models and involved parties.
+3. **Be Wary of Unsolicited Offers**: Avoid offers that use high-pressure sales tactics or promise guaranteed high returns with little risk.
+4. **Check Regulatory Compliance**: Verify the registration and licensing of the investment and the offering entity.
+5. **Demand Transparency**: Legitimate investments provide clear, detailed information about terms and risks.
+6. **Monitor Accounts Regularly**: Regularly review your accounts to ensure there are no unauthorized transactions.
+7. **Consult a Professional**: Seek advice from a certified financial advisor for an impartial assessment.
 
-If you have specific investments in mind or need further customization of the strategy, feel free to reach
-out for more detailed guidance!
+If you have specific investments in mind or need further customization of the strategy, feel free to reach out for more detailed guidance!
 ```
 
 ---
