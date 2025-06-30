@@ -42,7 +42,8 @@ Moderate Risk Investment Strategy
 For a moderate risk profile, a balanced investment strategy is key. Here's a suggested approach:
 
 1. Diversified Portfolio: 
-   - Equities: Allocate around 50-60% to a mix of stocks, including domestic and international options. Consider large-cap, mid-cap, and small-cap equities.
+   - Equities: Allocate around 50-60% to a mix of stocks, including domestic and international options. Consider
+large-cap, mid-cap, and small-cap equities.
    - Bonds: Allocate 25-40% to bonds, including government and corporate bonds with various maturities to provide stability and income.
    - Real Estate or REITs: Consider allocating 10-20% to real estate investment trusts (REITs) or real estate funds for additional income streams.
    - Alternative Investments: Consider a small allocation (5-10%) to alternatives like commodities or other instruments that align with your financial goals.
