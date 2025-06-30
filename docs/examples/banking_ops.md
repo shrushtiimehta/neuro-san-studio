@@ -66,7 +66,8 @@ Here are guidelines to help you avoid investment fraud and recognize red flags:
 
 1. Verify Credentials: Ensure that any financial advisor or investment firm is registered with regulatory bodies
 such as the SEC or FINRA.
-2. Conduct Thorough Research: Understand the investment thoroughly, including business models and involved parties.
+2. Conduct Thorough Research: Understand the investment thoroughly, including business models and involved
+parties.
 3. Be Wary of Unsolicited Offers: Avoid offers that use high-pressure sales tactics or promise guaranteed high
 returns with little risk.
 4. Check Regulatory Compliance: Verify the registration and licensing of the investment and the offering entity.
@@ -74,8 +75,8 @@ returns with little risk.
 6. Monitor Accounts Regularly: Regularly review your accounts to ensure there are no unauthorized transactions.
 7. Consult a Professional: Seek advice from a certified financial advisor for an impartial assessment.
 
-If you have specific investments in mind or need further customization of the strategy, feel free to reach out for
-more detailed guidance!
+If you have specific investments in mind or need further customization of the strategy, feel free to reach
+out for more detailed guidance!
 ```
 
 ---
