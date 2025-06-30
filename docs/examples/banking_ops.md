@@ -25,7 +25,7 @@ This network organizes its intelligence into nested layers, with specialized age
 ---
 
 ## Example Conversation
-
+```markdown
 ### Human
 
 ```text
@@ -35,7 +35,7 @@ profile? Additionally, please provide guidelines on how to avoid investment frau
 
 ### AI (Airline Policy 360 Assistant)
 
-```markdown
+```text
 Here's a comprehensive response based on the input from relevant specialists:
 
 ### Moderate Risk Investment Strategy
