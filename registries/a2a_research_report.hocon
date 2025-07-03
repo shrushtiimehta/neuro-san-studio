@@ -1,0 +1,75 @@
+
+# Copyright (C) 2023-2025 Cognizant Digital Business, Evolutionary AI.
+# All Rights Reserved.
+# Issued under the Academic Public License.
+#
+# You can be released from the terms, and requirements of the Academic Public
+# License by purchasing a commercial license.
+# Purchase of a commercial license is mandatory for any use of the
+# neuro-san SDK Software in commercial settings.
+#
+# END COPYRIGHT
+
+# ***Important Notes***
+# This is an example of Agent2Agent (A2A) Protocol implementation in neuro-san
+# Before running this agent network
+# - cloning the repo from https://github.com/google/a2a-python/tree/main
+# - pip install .
+# - run A2A server and make sure that its port matches with that of the client in
+# coded tool/a2a_research_report/a2a_research_report
+
+
+{
+    "llm_config": {
+        "model_name": "gpt-4o",
+    },
+    "tools": [
+        # These tool definitions do not have to be in any particular order
+        # How they are linked and call each other is defined within their
+        # own specs.  This could be a graph, potentially even with cycles.
+
+        # This first agent definition is regarded as the "Front Man", which
+        # does all the talking to the outside world/client.
+        # It is identified as such because it is either:
+        #   A) The only one with no parameters in his function definition,
+        #      and therefore he needs to talk to the outside world to get things rolling.
+        #   B) The first agent listed, regardless of function parameters.
+        #
+        # Some disqualifications from being a front man:
+        #   1) Cannot use a CodedTool "class" definition
+        #   2) Cannot use a Tool "toolbox" definition
+        {
+            "name": "topic_identifier",
+
+            # Note that there are no parameters defined for this guy's "function" key.
+            # This is the primary way to identify this tool as a front-man,
+            # distinguishing it from the rest of the tools.
+
+            "function": {
+                "description": "Provide the user with report from A2A server that run crewAI.",
+            },
+
+            "instructions": """Identify the topic from the user's query, use your tool to generate a report on that topic, and return the report to the user.""",
+            "tools": ["research_report_crew"]
+        },
+
+        # This coded tool is an A2A client connecting to an A2A server running crewAI.
+        {
+            "name": "research_report_crew",
+            "function": {
+                "description": "Return bullet points on a given topic",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "topic": {
+                            "type": "string",
+                            "description": "Topic to do research on."
+                        }
+                    },
+                    "required": ["topic"]
+                }
+            },
+            "class": "a2a_research_report.A2aResearchReport"
+        },
+    ]
+}

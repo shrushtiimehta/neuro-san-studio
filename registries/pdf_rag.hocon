@@ -1,0 +1,86 @@
+
+# Copyright (C) 2023-2025 Cognizant Digital Business, Evolutionary AI.
+# All Rights Reserved.
+# Issued under the Academic Public License.
+#
+# You can be released from the terms, and requirements of the Academic Public
+# License by purchasing a commercial license.
+# Purchase of a commercial license is mandatory for any use of the
+# neuro-san SDK Software in commercial settings.
+#
+# END COPYRIGHT
+{
+    "llm_config": {
+        "model_name": "gpt-4o",
+    },
+    "tools": [
+        # These tool definitions do not have to be in any particular order
+        # How they are linked and call each other is defined within their
+        # own specs.  This could be a graph, potentially even with cycles.
+
+        # This first agent definition is regarded as the "Front Man", which
+        # does all the talking to the outside world/client.
+        # It is identified as such because it is either:
+        #   A) The only one with no parameters in his function definition,
+        #      and therefore he needs to talk to the outside world to get things rolling.
+        #   B) The first agent listed, regardless of function parameters.
+        #
+        # Some disqualifications from being a front man:
+        #   1) Cannot use a CodedTool "class" definition
+        #   2) Cannot use a Tool "toolbox" definition
+        {
+            "name": "PDF RAG Assistant",
+
+            # Note that there are no parameters defined for this guy's "function" key.
+            # This is the primary way to identify this tool as a front-man,
+            # distinguishing it from the rest of the tools.
+
+            "function": {
+                "description": "Answer caller's query with answers from tools.",
+            },
+
+            "instructions": """Always use your tool to respond to the inquiry.
+            If the tool failed or unavailable, just notify the user.
+            Do not attempt to answer the question by yourself.""",
+            "tools": ["rag_retriever"]
+        },
+        # RAG tool that loads data from PDF URLs into an in-memory vectorstore and answers queries.
+        {
+            "name": "rag_retriever",
+            "function": {
+                "description": "Retrieve information from the given rfp documents",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Query for retrieval"
+                        }
+                    },
+                    "required": ["query"]
+                }
+            },
+            "class": "pdf_rag.PdfRag"
+            "args": {
+                # User-defined arguments for the tool
+
+                # --- Required Argument ---
+
+                # List of PDF URLs to use for Retrieval-Augmented Generation (RAG)
+                "urls": [
+                    """https://www.replicon.com/wp-content/uploads/2016/06/RFP-Template_Replicon.pdf""",
+                    """https://www.usac.org/wp-content/uploads/rural-health-care/documents/samples/LargeProjectScopeRFP.pdf"""
+                ],
+
+                # --- Optional Arguments ---
+
+                # Set to true to save the generated vector store as a JSON file
+                "save_vector_store": true,
+
+                # Directory to save and load the vector store (use absolute path or path relative to "neuro-san-studio/coded_tools/pdf_rag/")
+                # Must be ".json"
+                "vector_store_path": "vector_store.json"
+            }
+        },
+    ]
+}
