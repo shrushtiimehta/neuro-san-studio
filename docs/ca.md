@@ -7,15 +7,13 @@
 
 | **Feature/Category**                     | **OpenAI GPT-4o**                                                                      | **Google Gemini**                                                                 |
 |------------------------------------------|----------------------------------------------------------------------------------------|------------------------------------------------------------------------------------|
-| **Adaptive Agentic Communication**       | ⚠️ Partial – Single-agent flow, great at context switching but no native delegation.  | ✔️ Full – Simulates Account Manager, Fraud Team, and Loan Officer personas.      |
-| **Response Completeness**                | ✔️ Concise, actionable, user-focused responses.                                        | ✔️ Very detailed, sometimes overly verbose.                                      |
-| **Clarifications & Defaults Handling**   | ✔️ Proceeds on defaults like “medium risk”, avoids blocking responses.                | ⚠️ Refuses to answer without all clarifications.                                |
-| **Multi-Turn Dialogue Adaptiveness**     | ✔️ Smooth context retention, handles follow-ups seamlessly.                           | ⚠️ Fragmented; treats new queries as new threads unless fully specified.         |
-| **Tone & Empathy**                       | ✔️ Friendly, conversational, clear.                                                   | ⚠️ Formal, system-like, less conversational.                                     |
-| **Banking & Investment Knowledge**       | ✔️ Provides usable advice, prioritizes simplicity.                                    | ✔️ Technical breakdowns with in-depth rationales.                               |
-| **Fraud & Cybersecurity Depth**          | ⚠️ Practical but shallow advice on fraud/security.                                   | ✔️ Advanced technical insights on anomaly detection & fraud monitoring.         |
-| **Operational Readiness**                | ✔️ Real-time ready for AAOSA front-line agents.                                       | ⚠️ Too slow for real-time agent operations.                                     |
-| **Workflow Automation Readiness**        | ✔️ Smooth agent handoff and task execution.                                           | ⚠️ More suited for back-office analysis workflows.                              |
+| **Adaptive Agentic Communication**       | Single-agent flow, great at context switching but no native delegation.  | Simulates Account Manager, Fraud Team, and Loan Officer personas.      |
+| **Response Completeness**                | Concise, actionable, user-focused responses.                                        | Very detailed, sometimes overly verbose. (over explain)                                      |
+| **Clarifications & Defaults Handling**   | Proceeds on defaults sometimes. (not repitative)                | Focuses on clarifications. (sometimes repitative)                                |
+| **Multi-Turn Dialogue Adaptiveness**     | Smooth context retention, handles follow-ups seamlessly.                           | Fragmented; sometimes treats new queries as new threads.         |
+| **Tone & Empathy**                       | Empathetic, Friendly, conversational, clear.                                                   | Formal, system-like, less conversational.                                     |
+| **Banking & Investment Knowledge**       | Provides usable advice, prioritizes simplicity. (sometimes shallow)                                   | Technical breakdowns with in-depth rationales. (uses links too much)                              |
+| **Workflow Automation Readiness**        | Smooth agent handoff and task execution.                                           | More suited for back-office analysis workflows.                              |
 
 ---
 
@@ -118,6 +116,3 @@
 - ➡️ Prepare an LLM integration architecture for specialized vs. generalist agents in Neuro SAN.
 
 ---
-
-*Prepared by: Shrushti Mehta*  
-*Date: 2025-07-08*
