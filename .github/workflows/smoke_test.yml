@@ -1,0 +1,55 @@
+name: Smoke Tests
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'push' && github.ref != 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && github.base_ref == 'main')
+    container:
+      image: python:3.12-slim
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          apt-get update && apt-get install -y shellcheck make
+          python -m venv venv
+          source venv/bin/activate
+          pip install pytest
+          pip install -r requirements-build.txt || echo "No requirements-build.txt found"
+          pip install -r requirements.txt || echo "No requirements.txt found"
+
+      - name: Show installed packages
+        shell: bash
+        run: |
+          source venv/bin/activate
+          pip freeze
+
+      - name: Run smoke tests and capture durations
+        shell: bash
+        env:
+          AGENT_TOOL_PATH: "./neuro_san/coded_tools"
+          PYTHONPATH: ${{ env.PYTHONPATH }}:.
+        run: |
+          START_TIME=$(date +%s)
+          echo "Workflow Start Time: $(date)"
+
+          source venv/bin/activate
+          pytest -s --verbose --durations=0 registries/banking_ops.py registries/banking_ops_gemini.py
+
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo "Workflow End Time: $(date)"
+          echo "Total Workflow Duration: $DURATION seconds"
