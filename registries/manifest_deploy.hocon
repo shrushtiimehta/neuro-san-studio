@@ -29,5 +29,8 @@
     "carmax.hocon": true,
     "booking.hocon": true,
     "website_search.hocon": true,
-    "LinkedInJobSeekerSupportNetwork.hocon": true
+    "LinkedInJobSeekerSupportNetwork.hocon": true,
+    # Vibecoding agent networks
+    "vibecoding_evaluator.hocon": true,
+    "vc_repo_evaluator.hocon": true,
 }

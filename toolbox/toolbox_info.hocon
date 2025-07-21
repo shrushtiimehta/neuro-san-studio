@@ -103,6 +103,22 @@
         }      
     },
 
+    "pdf_rag": {
+        # This is a coded tool for RAG on PDF files.
+        "class": "pdf_rag.PdfRag", 
+        "description": "Retrieve information from the given PDF files",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Query for retrieval"
+                }
+            },
+            "required": ["query"]
+        }
+    },
+
     # ---------- Agent Network Tools ----------
 
     "call_agent": {

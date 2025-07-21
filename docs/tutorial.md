@@ -439,17 +439,18 @@ providers by changing the `model_name` of `llm_config` in your `.hocon` file.
 
 ### Available Models and Preset Parameters
 
-All available models and their providers are listed in the
-[default llm info file](https://github.com/cognizant-ai-lab/neuro-san/blob/main/neuro_san/internals/run_context/langchain/llms/default_llm_info.hocon).
-Each entry in this file includes preset parameters that define how the model should be used.
+All available models and their corresponding providers are defined in the
+[default LLM info file](https://github.com/cognizant-ai-lab/neuro-san/blob/main/neuro_san/internals/run_context/langchain/llms/default_llm_info.hocon).
 
-If needed, you can **override these preset parameters** directly in your `llm_config`.
+Each entry includes **preset parameters** that determine how the model should be used,
+such as token limits or default temperature values.
 
-Please refer to
+If needed, you can **override these preset values** directly in your `llm_config`.
 
-* [LLM Info HOCON Reference Guide](https://github.com/cognizant-ai-lab/neuro-san/blob/main/docs/llm_info_hocon_reference.md)
+For more information on customizing or extending available models, refer to:
+* [Using Custom or Non-Default LLMs](user_guide.md#using-custom-or-non-default-llms)
 * [LangChain Chat Model Integration](https://python.langchain.com/docs/integrations/chat/)
-for provider-specific parameter options.
+for provider-specific parameter options
 
 ### API Keys & Environment Variables
 
@@ -466,6 +467,8 @@ More details can be found in the following resources:
 * [User Guide: LLM Configuration](user_guide.md#llm-configuration)
 * [API Key Documentation](api_key.md)
 * [.env.example](../.env.example)
+* [LLM Info HOCON Reference Guide](https://github.com/cognizant-ai-lab/neuro-san/blob/main/docs/llm_info_hocon_reference.md)
+* [Agent HOCON Reference Guide](https://github.com/cognizant-ai-lab/neuro-san/blob/main/docs/agent_hocon_reference.md)
 
 ### Using Local LLMs via Ollama
 
@@ -730,11 +733,27 @@ don’t need to redefine it in the agent network — just reference it by name.
 
 If you want to add your own tools to the Toolbox (so they can be reused easily):
 
-* For coded tools, create your tool using the CodedTool interface in Python.
+* **For coded tools**: Implement your tool in Python using the `CodedTool` interface.
 
-* Add an entry to your toolbox config file similar to examples in the previous section.
+* **Add your tool to a config file**: Define an entry in your custom toolbox info file,
+following the structure shown in the previous examples.
 
-* Set the `AGENT_TOOLBOX_INFO_FILE` environment variable to point to this config.
+* **Register the config file** by one of the following methods:
+
+    * Set the `toolbox_info_file` key
+        > **Note:** The `agent_toolbox_info_file` key has been **deprecated as of version 0.5.46**.  
+        > Please use `toolbox_info_file` instead.  
+        > `agent_toolbox_info_file` will remain supported until `neuro-san==0.6.0`.
+
+    * Use the `AGENT_TOOLBOX_INFO_FILE` environment variable
+
+This setup allows you to introduce custom tools without modifying the built-in toolbox definitions.
+
+See also
+
+* [Toolbox](user_guide.md#toolbox) section of the user guide
+* [Toolbox Info HOCON File Reference](
+    https://github.com/cognizant-ai-lab/neuro-san/blob/main/docs/toolbox_info_hocon_reference.md) documentation
 
 ---
 
