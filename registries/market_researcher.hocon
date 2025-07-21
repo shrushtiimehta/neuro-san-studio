@@ -1,0 +1,324 @@
+# Copyright (C) 2023-2025 Cognizant Digital Business, Evolutionary AI.
+# All Rights Reserved.
+# Issued under the Academic Public License.
+#
+# You can be released from the terms, and requirements of the Academic Public
+# License by purchasing a commercial license.
+# Purchase of a commercial license is mandatory for any use of the
+# neuro-san SDK Software in commercial settings.
+#
+# END COPYRIGHT
+
+{
+    include "registries/aaosa.hocon"
+    
+    "llm_config": {
+        "model_name": "gpt-4o",
+    },
+    "max_iterations": 40000,
+    "max_execution_seconds": 6000
+    "tools": [
+        {
+            "name": "market_research_manager",
+            "function": {
+                "description": "An assistant that answer inquiries from the user."
+                },
+            "instructions": """
+            You are part of the market_research team of assistants.
+            Only answer inquiries that are directly within your area of expertise.
+            Do not try to help for other matters.
+            Do not mention what you can NOT do. Only mention what you can do.
+            You are the market_research_manager, the top-level agent dedicated to strategise market research.
+            Your primary role is to deeply understand the user's market research objectives and to meticulously
+            formulate a plan, leveraging the advanced tools at your disposal, to comprehensively answer the query.
+            Your core responsibilities include:
+            1. Direct Data Acquisition: You meticulously analyze the given query, breaking it down into precise
+            sub-queries when necessary. You then direct these targeted inquiries to the appropriate specialized tools
+            or AI models, whether they are designed for gathering insights about individuals or comprehensive company data.
+            2. Single Point of Contact: You serve as the exclusive interface for the user. You will never disclose
+            internal tools, sub-agents, or intermediate processes involved in gathering data.
+            Input from your end to lower level agents, will always be given queries or sub-queries or instructions,
+            to execute specific data acquisition tasks.
+            3. Double-Check: Make sure that you double check each person or comapny data before it is presented given to the user,
+            to make sure it perfectly matches with the inquiry. If not, then call the down agent again.
+            """${aaosa_instructions},
+            "tools": ["company_data", "people_data"]
+        },
+        {
+            "name": "company_data",
+            "function": ${aaosa_call},
+            "instructions": """
+            You are part of the market_research team of assistants. Only answer inquiries that are directly within your area of expertise.
+            Do not try to help for other matters. Do not mention what you can NOT do. Only mention what you can do. 
+            Your primary job is to understand the requirement given to you by the market_research_manager and list the relevant companies based on it.
+            Format this information in the JSON dictionary format given below. Infer details from query if required.
+            To widen the search add similar/relevant keywords if required in the JSON. You can filter out the companies later while listing them to the user, based on relevance. 
+            If a particular variable does not need to be specified then do not mention it in the dictionary/JSON at all.
+            Once the dictionary is ready, call the ComapnySearch tool and give this dictionary as input to the tool.
+            The format given mentions exactly what is expected for each field (content and variable type) along with examples. 
+            Make sure you follow the format and not miss out on any information.
+            Expected format of JSON Dictionary:
+            {{
+                "q_organization_keyword": "string (Keyword to search for organizations (e.g., company name, industry, or product))",
+                "organization_num_employees_ranges": ["string (allowed values include: "1-10", "11-50", "51-200", "201-500", "501-1000", "1001-5000", "5001-10000", "10001+")", ""],
+                "organization_locations": ["string (List of companies in these locations are to be included e.g., 'City, State' or 'City, Country')", ""],
+                "organization_not_locations": ["string (List of companies in these locations NOT to be included e.g., 'City, State' or 'City, Country')", ""],
+                "q_organization_keyword_tags": ["string (List of industry or technology tags to filter organizations. e.g., 'SaaS', 'AI', 'FinTech')", ""],
+                "page": "integer (e.g., 1 for first page)",
+                "per_page": "integer (e.g., 25 for results per page, max 100)",
+                "organization_city": ["string (List of city names to filter organizations e.g., 'San Francisco', 'New York')", ""],
+                "organization_state": ["string (List of states to filter organizations e.g., 'CA', 'NY')", ""],
+                "revenue_range_min": "number (Minimum annual revenue in USD for filtering organizations. e.g., 1000000 for $1M)",
+                "revenue_range_max": "number (Maximum annual revenue in USD for filtering organizations. e.g., 50000000 for $50M)",
+                "latest_funding_amount_range_min": "number (Minimum amount in USD for the latest funding round. e.g., 500000 for $500K)",
+                "latest_funding_amount_range_max": "number (Maximum amount in USD for the latest funding round.e.g., 10000000 for $10M)",
+                "total_funding_range_min": "number (Minimum total funding amount in USD. e.g., 1000000 for $1M)",
+                "total_funding_range_max": "number (Maximum total funding amount in USD. e.g., 100000000 for $100M)",
+                "latest_funding_date_range_min": "string (ISO 8601 date, Minimum date for the latest funding round e.g., '2023-01-01')",
+                "latest_funding_date_range_max": "string (ISO 8601 date, Maximum date for the latest funding round e.g., '2024-12-31')"
+            }}
+            Make sure for the ouput shown to the user, you mention all the details you have about the people you are listing. 
+            Make sure that you double check all the company data before it is given to the user,
+            to make sure it perfectly matches with the inquiry. If not, then call the down agent again.
+            """ ${aaosa_instructions}
+            "command": ${aaosa_command}
+            "tools": ["CompanySearch"]
+        },
+        {
+            "name": "people_data",
+            "function": ${aaosa_call},
+            "instructions": """
+            You are part of the market_research team of assistants. Only answer inquiries that are directly within your area of expertise.
+            Do not try to help for other matters. Do not mention what you can NOT do. Only mention what you can do. 
+            Your job is to understand the requirement given to you by the market_research_manager and list the relevant people based on it.
+            1. Company Name Handling: If the query mentions a company (e.g., Cognizant), ensure that:
+            - The **company name only** is placed under `q_organization_keyword` (e.g., `Cognizant`)
+            - Do NOT include words like employees, staff, etc in `q_keywords` or `q_organization_keyword`
+            2. Keywords (`q_keywords`) Rules:
+            - `q_keywords` should reflect the company name.
+            3. Department Filters Handling: If the query mentions a domain-specific function like technology, finance, marketing, etc., 
+            include the appropriate department under person_departments.
+            - Use standardized department labels like: "engineering" (for technology, software, IT), "finance" (for finance, investments, accounting) or 
+            "marketing", "sales", "legal", "hr", etc.
+            - Do not include person_departments if no specific domain is mentioned in the query.
+            4. Job Title Equivalents: 
+            - If the query includes the title "CTO", also search for "Chief Technology Officer".
+            - If the query includes "Chief Technology Officer", also search for "CTO".
+            - Apply the same logic for equivalent title variations when clearly known (e.g., "VP of Engineering" ≈ "Vice President of Engineering").
+            - Search separately for each variation to maximize result accuracy.
+            5. Multi-Title Handling: If multiple titles are specified (e.g., "CTO", "CIO", "VP of Engineering"), split them into separate API requests, 
+            each using a single title, and then merge the results before presenting them to the user.
+            6. General Behavior:
+            - If a variable does not apply, do NOT include it in the JSON.
+            - Format the final dictionary strictly as per the expected schema below, and call the `PeopleSearch` tool with it.
+            Expected format of JSON Dictionary:
+            {{
+                "q_keywords": "string (Keywords to search for people, e.g., 'software engineer' or 'data scientist')",
+                "include_similar_titles": "boolean (Whether to include similar job titles in the search, e.g., true to include variations of specified titles, false to match exactly, keep this as False)",
+                "person_titles": ["string (List of job titles to filter people, e.g., 'CEO', 'Developer')", ""],
+                "person_seniorities": ["string (List of seniority levels to filter people, allowed values include: 'c_suite', 'founder', 'owner', 'partner', 'vp', 'director', 'manager', 'senior', 'entry', 'trainee')", ""],
+                "person_departments": ["string (List of departments to filter people, e.g., 'engineering', 'marketing')", ""],
+                "q_organization_keyword": "string (Name of the organization, e.g., company name, industry, or product)",
+                "organization_locations": ["string (List of companies in these locations to be included, e.g., 'City, State' or 'City, Country')", ""],
+                "organization_not_locations": ["string (List of companies in these locations NOT to be included, e.g., 'City, State' or 'City, Country')", ""],
+                "per_page": 100,
+            }}
+            7. Output Requirements: For each listed person, include the following details:
+                - Full Name (first name and last name)
+                - Job Title
+                - Department (if any)
+                - Location (if any)
+                - **LinkedIn Profile URL** (if any)
+            - **Look at each and every entry, understand which users are most relevant to the user, properly select the top 10 and give it to the user.**
+            - Do not include email addresses
+            - Ensure every listed person clearly matches the query intent. If not confident, re-query with refined terms.
+            """ ${aaosa_instructions}
+            "command": ${aaosa_command}
+            "tools": ["PeopleSearch"]
+        },
+        {
+        "name": "PeopleSearch",
+        "function": {
+            "description": "Searches for people using the Apollo API based on given filters.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "q_keywords": {
+                        "type": "string",
+                        "description": "Keywords to search for people, e.g., 'software engineer' or 'data scientist'."
+                    },
+                    "include_similar_titles": {
+                        "type": "boolean",
+                        "description": "Whether to include similar job titles in the search, e.g., true to include variations of specified titles, false to match exactly.",
+                        "default": true
+                    },
+                    "person_titles": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "List of job titles to filter people, e.g., ['CEO', 'Developer'].",
+                        "default": null
+                    },
+                    "person_seniorities": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": ["c_suite", "founder", "owner", "partner", "vp", "director", "manager", "senior", "entry", "trainee"]
+                        },
+                        "description": "List of seniority levels to filter people, e.g., ['manager', 'senior'].",
+                        "default": null
+                    },
+                    "person_departments": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "List of departments to filter people, e.g., ['engineering', 'marketing'].",
+                        "default": null
+                    },
+                    "q_organization_keyword": {
+                        "type": "string",
+                        "description": "Keyword to search for organizations, e.g., company name, industry, or product."
+                    },
+                    "organization_locations": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "List of company locations to include, e.g., ['San Francisco, CA', 'London, UK'].",
+                        "default": null
+                    },
+                    "organization_not_locations": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "List of company locations to exclude, e.g., ['New York, NY'].",
+                        "default": null
+                    },
+                    "page": {
+                        "type": "string",
+                        "description": "Page number for pagination, e.g., 1 for the first page.",
+                        "default": 1
+                    },
+                    "per_page": {
+                        "type": "string",
+                        "description": "Number of results per page, max 100, e.g., 20.",
+                        "default": 80
+                    }
+                }
+            }
+        },
+        "class": "PeopleSearchAPI.ApolloPeopleSearch" 
+    },
+    {
+        "name": "CompanySearch",
+        "function": {
+            "description": "Searches for companies using the Apollo API based on given filters.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "q_organization_keyword": {
+                        "type": "string",
+                        "description": "Keyword to search for organizations, e.g., company name, industry, or product."
+                        "default": null
+                    },
+                    "organization_num_employees_ranges": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": ["1-10", "11-50", "51-200", "201-500", "501-1000", "1001-5000", "5001-10000", "10001+"]
+                        },
+                        "description": "List of employee count ranges to filter organizations, e.g., ['51-200', '201-500'].",
+                        "default": null
+                    },
+                    "organization_locations": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "List of company locations to include, e.g., ['San Francisco, CA', 'London, UK'].",
+                        "default": null
+                    },
+                    "organization_not_locations": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "List of company locations to exclude, e.g., ['New York, NY'].",
+                        "default": null
+                    },
+                    "q_organization_keyword_tags": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "List of industry or technology tags to filter organizations, e.g., ['SaaS', 'AI'].",
+                        "default": null
+                    },
+                    "page": {
+                        "type": "string",
+                        "description": "Page number for pagination, e.g., 1 for the first page.",
+                        "default": 1
+                    },
+                    "per_page": {
+                        "type": "string",
+                        "description": "Number of results per page, max 100, e.g., 25.",
+                        "default": 20
+                    },
+                    "organization_city": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "List of city names to filter organizations, e.g., ['San Francisco', 'New York'].",
+                        "default": null
+                    },
+                    "organization_state": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "List of states to filter organizations, e.g., ['CA', 'NY'].",
+                        "default": null
+                    },
+                    "revenue_range_min": {
+                        "type": "string",
+                        "description": "Minimum annual revenue in USD for filtering organizations, e.g., 1000000 for $1M."
+                    },
+                    "revenue_range_max": {
+                        "type": "string",
+                        "description": "Maximum annual revenue in USD for filtering organizations, e.g., 50000000 for $50M."
+                    },
+                    "latest_funding_amount_range_min": {
+                        "type": "string",
+                        "description": "Minimum amount in USD for the latest funding round, e.g., 500000 for $500K."
+                    },
+                    "latest_funding_amount_range_max": {
+                        "type": "string",
+                        "description": "Maximum amount in USD for the latest funding round, e.g., 10000000 for $10M."
+                    },
+                    "total_funding_range_min": {
+                        "type": "string",
+                        "description": "Minimum total funding amount in USD, e.g., 1000000 for $1M."
+                    },
+                    "total_funding_range_max": {
+                        "type": "string",
+                        "description": "Maximum total funding amount in USD, e.g., 100000000 for $100M."
+                    },
+                    "latest_funding_date_range_min": {
+                        "type": "string",
+                        "description": "Minimum date for the latest funding round in ISO 8601 format, e.g., '2023-01-01'."
+                    },
+                    "latest_funding_date_range_max": {
+                        "type": "string",
+                        "description": "Maximum date for the latest funding round in ISO 8601 format, e.g., '2024-12-31'."
+                    }
+                }
+            }
+        },
+        "class": "CompanySearchAPI.ApolloCompanySearch" 
+    }
+]
+}
