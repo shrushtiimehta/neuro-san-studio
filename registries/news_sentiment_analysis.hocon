@@ -123,7 +123,6 @@ If mode is 'Fulfill' or "Follow up", respond to the inquiry and return a json bl
             "function": "aaosa_call",
             "instructions": """{instructions_prefix} Produce a comprehensive sentiment analysis report that is detailed, quantitative, and based on clear inferences. 
             The average compound sentiment scores for each source and overall sentiment in this format: "<source_name>": "avg_compound": <..>,
-            The "all_news_articles.txt" contains articles from all the sources together.
             Use the EXACT scores from the JSON file. Do NOT invent/fabricate sources, scores, or examples.
             Include all these report Sections:
             1. Sentiment Analysis:
