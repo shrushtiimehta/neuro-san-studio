@@ -13,6 +13,10 @@ Here are a few examples ordered by level of complexity.
     * [Music Nerd Pro Sly](#music-nerd-pro-sly)
     * [Music Nerd Pro Sly Local](#music-nerd-pro-sly-local)
   * [🧰 Tool Integration Examples](#-tool-integration-examples)
+    * [Anthropic Code Execution](#anthropic-code-execution)
+    * [Anthropic Web Search](#anthropic-web-search)
+    * [OpenAI Code Interpreter](#openai-code-interpreter)
+    * [OpenAI Web Search](#openai-web-search)
     * [Gmail Assistant](#gmail-assistant)
     * [Agent Network HTML Creator](#agent-network-html-creator)
     * [Agentforce](#agentforce)
@@ -93,6 +97,42 @@ a **tool-calling** LLM that runs locally with Ollama.
 ## 🧰 Tool Integration Examples
 
 Examples that demonstrate how to integrate external tools and services.
+
+### Anthropic Code Execution
+
+[Code Execution Assistant](./examples/anthropic_code_execution.md) is a task-oriented agentic system designed to help
+users execute code and perform computational tasks efficiently. It leverages Anthropic's built-in code execution tool
+through a specialized toolkit, providing users with the ability to run Python code, generate visualizations,
+perform data analysis, and create files through natural language commands.
+
+**Tags:** `tool`, `Anthropic`
+
+### Anthropic Web Search
+
+[Anthropic Web Search](./examples/anthropic_web_search.md) is a task-oriented agentic system designed to help users
+search and retrieve information from the web efficiently. It leverages Anthropic's built-in web search tool through
+a specialized toolkit, providing users with accurate, up-to-date information from across the internet through
+natural language queries.
+
+**Tags:** `tool`, `Anthropic`
+
+### OpenAI Code Interpreter
+
+[OpenAI Code Interpreter](./examples/openai_code_interpreter.md) is a task-oriented agentic system designed to help
+users execute code and perform computational tasks efficiently. It leverages OpenAI's built-in code interpreter tool
+through a specialized toolkit, providing users with the ability to run Python code, generate visualizations,
+perform data analysis, and create computational solutions through natural language commands.
+
+**Tags:** `tool`, `OpenAI`
+
+### OpenAI Web Search
+
+[OpenAI Web Search](./examples/openai_web_search.md) is a task-oriented agentic system designed to help users search
+and retrieve information from the web efficiently. It leverages OpenAI's built-in web search tool through a specialized
+toolkit, providing users with accurate, up-to-date information from across the internet through
+natural language queries.
+
+**Tags:** `tool`, `OpenAI`
 
 ### Gmail Assistant
 
