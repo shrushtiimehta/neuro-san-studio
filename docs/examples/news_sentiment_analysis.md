@@ -18,7 +18,7 @@ This agent is **disabled by default**. To enable and use it:
 
 Install the following dependencies:
 ```bash
-pip install newspaper3k beautifulsoup4 nltk vaderSentiment backoff lxml
+pip install newspaper3k beautifulsoup4 nltk vaderSentiment backoff lxml_html_clean
 ```
 ### 2. Get API Keys
 
