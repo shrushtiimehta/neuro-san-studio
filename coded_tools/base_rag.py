@@ -9,6 +9,7 @@
 #
 # END COPYRIGHT
 
+import logging
 import os
 import re
 from abc import ABC
@@ -18,7 +19,6 @@ from typing import Any
 from typing import List
 from typing import Literal
 from typing import Optional
-import logging
 
 # pylint: disable=import-error
 from asyncpg import InvalidCatalogNameError
