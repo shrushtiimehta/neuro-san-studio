@@ -11,11 +11,11 @@
 #
 # END COPYRIGHT
 
+import logging
 import os
 from typing import Any
 from typing import Dict
 from typing import List
-import logging
 
 from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_core.documents import Document
