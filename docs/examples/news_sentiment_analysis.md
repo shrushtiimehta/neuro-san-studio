@@ -18,7 +18,7 @@ This agent is **disabled by default**. To enable and use it:
 
 Install the following dependencies:
 ```bash
-pip install -r coded_tools/news_sentiment_analysis/requirements_news_sentiment_analysis.txt
+pip install -r coded_tools/news_sentiment_analysis/requirements.txt
 ```
 ### 2. Get API Keys
 
