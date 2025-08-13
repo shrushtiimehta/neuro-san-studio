@@ -1,7 +1,11 @@
 import json
 import logging
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Tuple
 
 from neuro_san.interfaces.coded_tool import CodedTool
 from nltk import sent_tokenize

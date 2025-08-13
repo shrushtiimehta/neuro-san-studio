@@ -1,7 +1,9 @@
 import logging
 import os
 import time
-from typing import Any, Dict
+from typing import Any
+from typing import Dict
+
 import backoff
 import feedparser
 import requests
