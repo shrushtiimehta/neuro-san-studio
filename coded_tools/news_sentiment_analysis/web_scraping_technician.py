@@ -1,3 +1,14 @@
+# Copyright (C) 2023-2025 Cognizant Digital Business, Evolutionary AI.
+# All Rights Reserved.
+# Issued under the Academic Public License.
+#
+# You can be released from the terms, and requirements of the Academic Public
+# License by purchasing a commercial license.
+# Purchase of a commercial license is mandatory for any use of the
+# neuro-san-studio SDK Software in commercial settings.
+#
+# END COPYRIGHT
+
 import logging
 import os
 import time
@@ -11,6 +22,7 @@ import requests
 from bs4 import BeautifulSoup
 from neuro_san.interfaces.coded_tool import CodedTool
 from newspaper import Article
+
 # pylint: enable=import-error
 
 # Setup logger
@@ -20,22 +32,40 @@ logger = logging.getLogger(__name__)
 
 class WebScrapingTechnician(CodedTool):
     """
-    A class to scrape news articles from NYT, Guardian, and Al Jazeera.
+    CodedTool implementation for collecting news articles from The New York Times, The Guardian, and Al Jazeera.
+    Supports keyword-based filtering and saves results to text files for downstream analysis.
     """
 
     def __init__(self):
         self.nyt_api_key = os.getenv("NYT_API_KEY")
         self.guardian_api_key = os.getenv("GUARDIAN_API_KEY")
         self.nyt_sections = [
-            "arts", "business", "climate", "education", "health", "jobs", "opinion",
-            "politics", "realestate", "science", "technology", "travel", "us", "world"
+            "arts",
+            "business",
+            "climate",
+            "education",
+            "health",
+            "jobs",
+            "opinion",
+            "politics",
+            "realestate",
+            "science",
+            "technology",
+            "travel",
+            "us",
+            "world",
         ]
         self.aljazeera_feeds = {"world": "https://www.aljazeera.com/xml/rss/all.xml"}
         logger.info("WebScrapingTechnician initialized")
 
     def scrape_with_bs4(self, url: str, source: str = "generic") -> str:
         """
-        Scrape article content using BeautifulSoup as a fallback method.
+        Scrape article content from a given URL using BeautifulSoup as a fallback method.
+
+        :param url: The URL of the article to scrape.
+        :param source: Optional string indicating the news source for custom parsing.
+
+        :return: Extracted article text, or an empty string if scraping fails.
         """
         try:
             response = requests.get(url, timeout=15)
@@ -60,7 +90,11 @@ class WebScrapingTechnician(CodedTool):
     )
     def _fetch_nyt_section(self, url: str) -> Dict:
         """
-        Fetch a section of NYT articles via API.
+        Fetch articles from a specific NYT section via their API, handling rate limits.
+
+        :param url: The NYT API endpoint for the section.
+
+        :return: Parsed JSON response containing articles.
         """
         response = requests.get(url, timeout=15)
         if response.status_code == 429:
@@ -79,13 +113,22 @@ class WebScrapingTechnician(CodedTool):
     @backoff.on_exception(backoff.expo, requests.exceptions.RequestException, max_tries=3, max_time=30)
     def _fetch_aljazeera_feed(self, feed_url: str) -> Any:
         """
-        Fetch the Al Jazeera RSS feed.
+        Retrieve and parse the Al Jazeera RSS feed.
+
+        :param feed_url: The RSS feed URL.
+
+        :return: Parsed feed data.
         """
         return feedparser.parse(feed_url)
 
     def _scrape_article(self, url: str, source: str) -> str:
         """
-        Scrape a single article using Newspaper3k, falling back to BeautifulSoup.
+        Scrape a single article using Newspaper3k, falling back to BeautifulSoup if needed.
+
+        :param url: The article URL.
+        :param source: The news source name for custom parsing.
+
+        :return: Extracted article text, or an empty string if scraping fails.
         """
         try:
             article = Article(url)
@@ -95,17 +138,25 @@ class WebScrapingTechnician(CodedTool):
             if not content:
                 raise ValueError("Empty content")
             return content
+        
         except (requests.exceptions.RequestException, ValueError) as e:
             logger.debug("Newspaper3k failed for %s: %s", url, e)
             return self.scrape_with_bs4(url, source)
 
     def scrape_nyt(self, keywords: list, save_dir: str = "nyt_articles_output") -> Dict[str, Any]:
         """
-        Scrape NYT articles matching given keywords.
+        Scrape NYT articles matching given keywords and save them to a text file.
+
+        :param keywords: List of keywords to filter articles.
+        :param save_dir: Directory to save the output file.
+
+        :return: Dictionary with the number of saved articles, file path, and status.
         """
         logger.info("NYT scraping started")
         keywords = [kw.lower() for kw in keywords]
+
         os.makedirs(save_dir, exist_ok=True)
+
         all_articles = []
 
         for section in self.nyt_sections:
@@ -127,15 +178,29 @@ class WebScrapingTechnician(CodedTool):
         with open(filename, "w", encoding="utf-8") as f:
             f.write("\n".join(all_articles) + "\n")
 
-        return {"saved_articles": len(all_articles), "file": filename, "status": "success" if all_articles else "failed"}
+        return {
+            "saved_articles": len(all_articles),
+            "file": filename,
+            "status": "success" if all_articles else "failed"
+        }
 
-    def scrape_guardian(self, keywords: list, save_dir: str = "guardian_articles_output", page_size: int = 50) -> Dict[str, Any]:
+    def scrape_guardian(
+        self, keywords: list, save_dir: str = "guardian_articles_output", page_size: int = 50
+    ) -> Dict[str, Any]:
         """
-        Scrape Guardian articles matching given keywords.
+        Scrape Guardian articles matching given keywords and save them to a text file.
+
+        :param keywords: List of keywords to filter articles.
+        :param save_dir: Directory to save the output file.
+        :param page_size: Number of articles to fetch per keyword.
+
+        :return: Dictionary with the number of saved articles, file path, and status.
         """
         logger.info("Guardian scraping started")
         keywords = [kw.lower() for kw in keywords]
+
         os.makedirs(save_dir, exist_ok=True)
+
         all_articles = []
 
         for keyword in keywords:
@@ -161,15 +226,26 @@ class WebScrapingTechnician(CodedTool):
         with open(filename, "w", encoding="utf-8") as f:
             f.write("\n".join(all_articles) + "\n")
 
-        return {"saved_articles": len(all_articles), "file": filename, "status": "success" if all_articles else "failed"}
+        return {
+            "saved_articles": len(all_articles),
+            "file": filename,
+            "status": "success" if all_articles else "failed",
+        }
 
     def scrape_aljazeera(self, keywords: list, save_dir: str = "aljazeera_articles_output") -> Dict[str, Any]:
         """
-        Scrape Al Jazeera articles matching given keywords.
+        Scrape Al Jazeera articles matching given keywords and save them to a text file.
+
+        :param keywords: List of keywords to filter articles.
+        :param save_dir: Directory to save the output file.
+
+        :return: Dictionary with the number of saved articles, file path, and status.
         """
         logger.info("Al Jazeera scraping started")
         keywords = [kw.lower() for kw in keywords]
+
         os.makedirs(save_dir, exist_ok=True)
+
         all_articles = []
 
         for feed_name, feed_url in self.aljazeera_feeds.items():
@@ -189,11 +265,20 @@ class WebScrapingTechnician(CodedTool):
         with open(filename, "w", encoding="utf-8") as f:
             f.write("\n".join(all_articles) + "\n")
 
-        return {"saved_articles": len(all_articles), "file": filename, "status": "success" if all_articles else "failed"}
+        return {
+            "saved_articles": len(all_articles),
+            "file": filename,
+            "status": "success" if all_articles else "failed",
+        }
 
     def scrape_all(self, keywords: list, save_dir: str = "all_articles_output") -> Dict[str, Any]:
         """
-        Scrape all sources (NYT, Guardian, Al Jazeera) for given keywords.
+        Scrape articles from all supported sources for given keywords and combine results.
+
+        :param keywords: List of keywords to filter articles.
+        :param save_dir: Directory to save the combined output file.
+
+        :return: Dictionary with the number of saved articles, individual file paths, combined file path, and status.
         """
         os.makedirs(save_dir, exist_ok=True)
 
@@ -201,6 +286,7 @@ class WebScrapingTechnician(CodedTool):
         guardian_result = self.scrape_guardian(keywords, save_dir)
         aljazeera_result = self.scrape_aljazeera(keywords, save_dir)
 
+        # Combine all articles into a single file
         all_articles = []
         for result in [nyt_result, guardian_result, aljazeera_result]:
             file_path = result.get("file")
@@ -223,7 +309,27 @@ class WebScrapingTechnician(CodedTool):
 
     def invoke(self, args: Dict[str, Any], sly_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Main invoke method to scrape articles from the chosen source.
+        Main method to invoke the web scraping tool.
+
+        :param args: Dictionary containing:
+            - source: News source to scrape ("nyt", "guardian", "aljazeera", or "all").
+            - keywords: Comma-separated list of keywords to filter articles.
+
+        :param sly_data: A dictionary whose keys are defined by the agent
+            hierarchy, but whose values are meant to be kept out of the
+            chat stream.
+
+            This dictionary is largely to be treated as read-only.
+            It is possible to add key/value pairs to this dict that do not
+            yet exist as a bulletin board, as long as the responsibility
+            for which coded_tool publishes new entries is well understood
+            by the agent chain implementation and the coded_tool implementation
+            adding the data is not invoke()-ed more than once.
+
+            Keys expected for this implementation are:
+                None
+
+        :return: Dictionary with the status of the operation and output details.
         """
         source = args.get("source", "all").lower().strip()
         keywords_str = args.get("keywords", "")
@@ -241,10 +347,12 @@ class WebScrapingTechnician(CodedTool):
             return self.scrape_aljazeera(keyword_list, save_dir)
         if source == "all":
             return self.scrape_all(keyword_list, save_dir)
-        return {"error": f"Invalid source '{source}'. Must be one of: nyt, guardian, aljazeera, all"}
+        return {
+            "error": f"Invalid source '{source}'. Must be one of: nyt, guardian, aljazeera, all"
+        }
 
     async def async_invoke(self, args: Dict[str, Any], sly_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Asynchronous wrapper for invoke method.
+        Delegates to the synchronous invoke method.
         """
         return self.invoke(args, sly_data)

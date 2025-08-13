@@ -1,3 +1,14 @@
+# Copyright (C) 2023-2025 Cognizant Digital Business, Evolutionary AI.
+# All Rights Reserved.
+# Issued under the Academic Public License.
+#
+# You can be released from the terms, and requirements of the Academic Public
+# License by purchasing a commercial license.
+# Purchase of a commercial license is mandatory for any use of the
+# neuro-san-studio SDK Software in commercial settings.
+#
+# END COPYRIGHT
+
 import json
 import logging
 import os
@@ -11,6 +22,7 @@ from typing import Tuple
 from neuro_san.interfaces.coded_tool import CodedTool
 from nltk import sent_tokenize
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
 # pylint: enable=import-error
 
 # Setup logger
@@ -31,9 +43,10 @@ SOURCE_MAP = {
     "all_news_articles": "all",
 }
 
+
 class SentimentAnalysis(CodedTool):
     """
-    A CodedTool that analyzes sentiment for sentences containing specific keywords
+    CodedTool implementation for analyzing sentiment of sentences containing specific keywords
     across text files stored in a predefined directory.
     """
 
@@ -48,12 +61,13 @@ class SentimentAnalysis(CodedTool):
     def analyze_keyword_sentiment(self, text: str, keywords: List[str]) -> Tuple[List[Dict], bool]:
         """
         Analyze sentiment of sentences containing specified keywords in the given text.
-        Args:
-            text: The input text to analyze.
-            keywords: List of keywords to filter sentences.
-        Returns: A tuple containing:
-            List of dictionaries with sentence and compound score.
-            Boolean indicating if any keywords were found.
+
+        :param text: The input text to analyze.
+        :param keywords: List of keywords to filter sentences.
+
+        :return: Tuple containing:
+            - List of dictionaries with sentence and compound score.
+            - Boolean indicating if any keywords were found.
         """
         try:
             sentences = sent_tokenize(text)
@@ -73,21 +87,21 @@ class SentimentAnalysis(CodedTool):
                         }
                     )
             return results, found_keywords
+
         except (LookupError, TypeError, ValueError):
             logger.exception("Error analyzing keyword sentiment")
             return [], False
 
     def _process_file(self, file_name: str, keywords_list: List[str], target_sources: Optional[set]) -> Optional[Dict[str, Any]]:
         """
-        Process a single file and return a dict with keys: file, sentences, avg_compound, snippet.
-        Returns None if the file is skipped or fails.Process a single file for sentiment analysis.
-        Args:
-            file_name: Name of the file to process.
-            keywords_list: List of keywords to filter sentences.
-            target_sources: Optional set of sources to filter files.
-        Returns:
-            A tuple containing file name, source name, sentence results, and average compound score.
-            Returns None if the file does not match criteria or cannot be processed.
+        Process a single file for sentiment analysis.
+
+        :param file_name: Name of the file to process.
+        :param keywords_list: List of keywords to filter sentences.
+        :param target_sources: Optional set of sources to filter files.
+
+        :return: Dictionary with file name, sentences, average compound score, and snippet.
+                 Returns None if the file does not match criteria or cannot be processed.
         """
         source_name = "unknown"
         for prefix, name in SOURCE_MAP.items():
@@ -125,19 +139,20 @@ class SentimentAnalysis(CodedTool):
 
     def _collect_articles(self, entries: List[str], keywords_list: List[str], target_sources: Optional[set]) -> Tuple[List[Dict[str, Any]], Dict[str, Dict[str, float]]]:
         """
-        Iterates over the provided file entries, processes each for keyword-based sentiment analysis, 
-        and accumulates both per-article data and aggregate sentiment statistics.
-        Args:
-            entries: List of text file names to process.
-            keywords_list: Keywords used to filter sentences for sentiment scoring.
-            target_sources: Optional set of source names to restrict processing.
+        Iterate over file entries, process each for keyword-based sentiment analysis,
+        and accumulate per-article data and aggregate sentiment statistics.
 
-        Returns: Tuple containing:
-            List of processed article dictionaries with sentiment details.
-            Dictionary of per-file aggregate sentiment statistics.
+        :param entries: List of text file names to process.
+        :param keywords_list: Keywords used to filter sentences for sentiment scoring.
+        :param target_sources: Optional set of source names to restrict processing.
+
+        :return: Tuple containing:
+            - List of processed article dictionaries with sentiment details.
+            - Dictionary of per-file aggregate sentiment statistics.
         """
         articles: List[Dict[str, Any]] = []
         file_stats: Dict[str, Dict[str, float]] = {}
+
         for file_name in entries:
             item = self._process_file(file_name, keywords_list, target_sources)
             if item is None:
@@ -147,17 +162,31 @@ class SentimentAnalysis(CodedTool):
                 file_stats[file_name] = {"compound_sum": 0.0, "count": 0}
             file_stats[file_name]["compound_sum"] += item["avg_compound"]
             file_stats[file_name]["count"] += 1
+
         return articles, file_stats
 
     def invoke(self, args: Dict[str, Any], sly_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Main method to invoke sentiment analysis tool.
-        Args: Dictionary containing:
-            source: Comma-separated list of sources to filter (default: "all").
-            keywords: Comma-separated list of keywords to filter sentences.
-        Sly_data: Additional data from the system (not used in this tool).
-        Returns:
-            A dictionary with the status of the operation, output file path, and results.
+
+        :param args: Dictionary containing:
+            - source: Comma-separated list of sources to filter (default: "all").
+            - keywords: Comma-separated list of keywords to filter sentences.
+        :param sly_data: A dictionary whose keys are defined by the agent
+            hierarchy, but whose values are meant to be kept out of the
+            chat stream.
+
+            This dictionary is largely to be treated as read-only.
+            It is possible to add key/value pairs to this dict that do not
+            yet exist as a bulletin board, as long as the responsibility
+            for which coded_tool publishes new entries is well understood
+            by the agent chain implementation and the coded_tool implementation
+            adding the data is not invoke()-ed more than once.
+
+            Keys expected for this implementation are:
+                None
+
+        :return: Dictionary with the status of the operation, output file path, and results.
         """
         source = args.get("source", "all").lower()
         keywords_list = [kw.strip().lower() for kw in args.get("keywords", "").split(",") if kw.strip()]
@@ -202,6 +231,6 @@ class SentimentAnalysis(CodedTool):
 
     async def async_invoke(self, args: Dict[str, Any], sly_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Async wrapper for invoke.
+        Delegates to the synchronous invoke method.
         """
         return self.invoke(args, sly_data)
