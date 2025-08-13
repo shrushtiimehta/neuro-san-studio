@@ -232,12 +232,9 @@ class AbsenceManager:
 
 # Example usage:
 if __name__ == "__main__":
-    CLIENT_ID = "XXX"  # Replace with your client_id
-    CLIENT_SECRET = "XXX"  # Replace with your client_id
-    ASSOCIATE_ID = "XXX"  # Replace with an associate_id
     START_DATE = "2023-10-01"
-
-    absence_manager = AbsenceManager(CLIENT_ID, CLIENT_SECRET, ASSOCIATE_ID)
+    # Use environment variables for client_id, client_secret, and associate_id
+    absence_manager = AbsenceManager(client_id=None, client_secret=None, associate_id=None)
 
     # Get absence types
     absence_types = absence_manager.get_absence_types(START_DATE)

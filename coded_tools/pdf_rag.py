@@ -12,15 +12,19 @@
 # END COPYRIGHT
 
 import logging
+import os
 from typing import Any
 from typing import Dict
 from typing import List
 
 from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_core.documents import Document
+from langchain_core.vectorstores import VectorStore
+
 from neuro_san.interfaces.coded_tool import CodedTool
 
-from .base_rag import BaseRag
+from coded_tools.base_rag import BaseRag
+from coded_tools.base_rag import PostgresConfig
 
 INVALID_PATH_PATTERN = r"[<>:\"|?*\x00-\x1F]"
 
@@ -69,17 +73,37 @@ class PdfRag(CodedTool, BaseRag):
         if not urls:
             return "❌ Missing required input: 'urls'."
 
+        # Vector store type
+        vector_store_type: str = args.get("vector_store_type", "in_memory")
+
         # Save the generated vector store as a JSON file if True
         self.save_vector_store = args.get("save_vector_store", False)
 
         # Configure the vector store path
         self.configure_vector_store_path(args.get("vector_store_path"))
 
+        # For PostgreSQL vector store
+        if vector_store_type == "postgres":
+            postgres_config = PostgresConfig(
+                user=os.getenv("POSTGRES_USER"),
+                password=os.getenv("POSTGRES_PASSWORD"),
+                host=os.getenv("POSTGRES_HOST"),
+                port=os.getenv("POSTGRES_PORT"),
+                database=os.getenv("POSTGRES_DB"),
+                table_name=args.get("table_name")
+            )
+        else:
+            postgres_config = None
+
         # Prepare the vector store
-        vectorstore = await self.generate_vector_store(loader_args={"urls": urls})
+        vector_store: VectorStore = await self.generate_vector_store(
+            loader_args={"urls": urls},
+            postgres_config=postgres_config,
+            vector_store_type=vector_store_type
+        )
 
         # Run the query against the vector store
-        return await self.query_vectorstore(vectorstore, query)
+        return await self.query_vectorstore(vector_store, query)
 
     async def load_documents(self, loader_args: Dict[str, Any]) -> List[Document]:
         """
@@ -89,7 +113,7 @@ class PdfRag(CodedTool, BaseRag):
         :return: List of loaded PDF documents
         """
         docs: List[Document] = []
-        urls = loader_args.get("urls", [])
+        urls: List[str] = loader_args.get("urls", [])
 
         for url in urls:
             try:
