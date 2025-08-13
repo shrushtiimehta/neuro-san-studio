@@ -57,12 +57,19 @@ the inquiry, if any. or if it is being asked to respond to the inquiry.
         },
     }
     "tools": [
+        # This first agent definition is regarded as the "Front Man", which
+        # does all the talking to the outside world/client.
+        #
+        # Some disqualifications from being a front man:
+        #   1) Cannot use a CodedTool "class" definition
+        #   2) Cannot use a Tool "toolbox" definition
+        #
+        # Besides the first agent being the front man, these tool definitions
+        # do not have to be in any particular order. How they are linked and
+        # call each other is defined within their own specs.
+        # This could be a graph, potentially even with cycles.
         {
             "name": "main_search_box",
-
-            # Note that there are no parameters defined for this guy's "function" key.
-            # This is the primary way to identify this tool as a front-man,
-            # distinguishing it from the rest of the tools.
 
             "function": {
 
