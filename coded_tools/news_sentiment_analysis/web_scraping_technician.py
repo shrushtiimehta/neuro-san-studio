@@ -4,12 +4,14 @@ import time
 from typing import Any
 from typing import Dict
 
+# pylint: disable=import-error
 import backoff
 import feedparser
 import requests
 from bs4 import BeautifulSoup
 from neuro_san.interfaces.coded_tool import CodedTool
 from newspaper import Article
+# pylint: enable=import-error
 
 # Setup logger
 logging.basicConfig(level=logging.DEBUG)
