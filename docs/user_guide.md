@@ -746,7 +746,6 @@ integration of **LangChain** and **custom-coded tools** in a agent network confi
 
 | Name               | Description                                           |
 | ------------------ | ----------------------------------------------------- |
-| `bing_search`      | Web search via Bing. Requires `BingSearchAPIWrapper`. |
 | `tavily_search`    | Web search via Tavily. |
 | `requests_get`     | HTTP GET requests.                                    |
 | `requests_post`    | HTTP POST requests.                                   |
