@@ -23,6 +23,7 @@
     "llm_config": {
         "model_name": "gpt-4o",
     },
+    "tools": [
         # This first agent definition is regarded as the "Front Man", which
         # does all the talking to the outside world/client.
         #
