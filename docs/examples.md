@@ -26,6 +26,7 @@ Here are a few examples ordered by level of complexity.
     * [PDF RAG Assistant](#pdf-rag-assistant)
     * [Confluence RAG Assistant](#confluence-rag-assistant)
     * [Agentic RAG Assistant](#agentic-rag-assistant)
+    * [ArXiv RAG Assistant](#arxiv-rag-assistant)
   * [🏢 Industry-Specific Examples](#-industry-specific-examples)
     * [Intranet Agents](#intranet-agents)
     * [Intranet Agents With Tools](#intranet-agents-with-tools)
@@ -200,6 +201,13 @@ retrieving information from the web, PDF documents, and Slack channels. It mimic
 to specialized tools and compiles responses into clear, helpful answers.
 
 **Tags:** `tool`, `API`, `RAG`
+
+### ArXiv RAG Assistant
+
+[ArXiv RAG Assistant](./examples/arxiv_rag.md) is an agent-based system that queries arXiv, pulls the best-matching
+research papers (abstracts or full text) and produces accurate responses to user queries (no vector store needed).
+
+**Tags:** `tool`, `RAG`
 
 ## 🏢 Industry-Specific Examples
 

@@ -1,0 +1,74 @@
+
+# Copyright (C) 2023-2025 Cognizant Digital Business, Evolutionary AI.
+# All Rights Reserved.
+# Issued under the Academic Public License.
+#
+# You can be released from the terms, and requirements of the Academic Public
+# License by purchasing a commercial license.
+# Purchase of a commercial license is mandatory for any use of the
+# neuro-san SDK Software in commercial settings.
+#
+# END COPYRIGHT
+
+{
+    "llm_config": {
+        "model_name": "gpt-4o",
+    },
+    
+    "tools": [
+        {
+            "name": "Arxiv RAG Assistant",
+
+            "function": {
+              "description": "Answer caller's query with answers from tools.",
+            },
+
+            "instructions": """Always use your tool to respond to the inquiry.
+            If the tool failed or unavailable, just notify the user.
+            Do not attempt to answer the question by yourself.""",
+
+            "tools": ["rag_retriever"]
+        },
+        # RAG tool that retrieves relevant data from Arxiv to answer user queries.
+        {
+            "name": "rag_retriever",
+
+            "toolbox": "arxiv_rag",
+
+            "args": {
+                # User-defined arguments for the tool
+
+                # --- Optional Arguments ---
+
+                # Maximum number of arXiv docs to load
+                # Start small and increase value only if answers lack context
+                # Recommended values:
+                # Fast experimentation (lightweight context): 3–5
+                # Deeper context (survey / related work scan): 8–15
+                "top_k_results": "3",
+
+                # Content scope:
+                # True = full PDF text (slower, richer context)
+                # False = abstracts only (faster, smaller)
+                "get_full_documents": "True",
+
+                # Per-document character cap to keep long pages from inflating context/cost
+                # Token math: ~1 token ≈ 4 chars
+                # Total doc tokens ≈ (K * doc_content_chars_max) / 4  (K = top_k_results)
+                # Budget docs to a small share of the model’s max tokens (aim ~6–10%; increase if answers lack context)
+                # Need more coverage? lower per-doc cap. Need more detail per doc? lower K
+                "doc_content_chars_max": "4000",
+
+                # Metadata scope: 
+                # True = full arXiv metadata (journal ref, categories, comments)
+                # False = minimal metadata (title, authors, abstract, published)
+                "load_all_available_meta": "False",
+
+                # Error handling:
+                # True = continue on retrieval/parsing errors
+                # False = fail fast
+                "continue_on_failure": "True",
+            }
+        }
+    ]
+}
