@@ -251,15 +251,8 @@
                     "type": "string",
                     "description": "Query for retrieval"
                 }
-                "wiki_queries": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    },
-                    "description": "A list of Wikipedia topics to load"
-                },
             },
-            "required": ["query", "wiki_queries"]
+            "required": ["query"]
         }
     },
 

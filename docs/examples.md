@@ -204,9 +204,8 @@ to specialized tools and compiles responses into clear, helpful answers.
 
 ### Wikipedia RAG Assistant
 
-[Wikipedia RAG Assistant](./examples/wikipedia_rag.md) answers user queries by retrieving and synthesizing information
-from Wikipedia articles. It fetches relevant article content, builds a vector store for semantic search, and retrieves
-context to generate accurate, well-cited responses.
+[Wikipedia RAG Assistant](./examples/wikipedia_rag.md) answers user queries by searching Wikipedia, fetching the most
+relevant articles, and synthesizing their content into accurate, detailed answers (no vector store required).
 
 **Tags:** `tool`, `RAG`
 

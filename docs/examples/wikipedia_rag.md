@@ -12,20 +12,19 @@ The **Wikipedia RAG Assistant** answers user queries using Retrieval-Augmented G
 
 ## Prerequisites for RAG:
 
-This agent is **disabled by default**. To enable and use it:
+This agent is **disabled by default**. To use it:
 
 1. Enable hocon file:
-   
+
    ```hocon
    "wikipedia_rag.hocon": true
    ```
-2. Installing the required package:
+
+2. Install the required package:
 
    ```bash
-    pip install wikipedia
-    ```
-    
-This starts and run a PostgreSQL container in the backgroud and maps port 6024 on your machine to port 5432 in the container.
+   pip install wikipedia
+   ```
 
 ---
 
@@ -68,28 +67,21 @@ image classification tasks.
 
 ### Frontman Agent: **Wikipedia RAG Assistant**
 
-* Serves as the **entry point** for user queries.  
-* Parses the query to identify **key Wikipedia topics** for article retrieval (`wiki_queries`).  
-* Passes both the **original query** and **topic list** to the `rag_retriever` tool.  
+* Serves as the **entry point** for user queries.
+* Passes the **query** to the `rag_retriever` tool.
 * Aggregates and composes the final answer.
 
 ### Tool: `rag_retriever`
 
-* Loads Wikipedia pages for the given topics.
-* Builds an **in-memory vector store** of the page text.  
-* Performs semantic search and context retrieval to answer the user’s query.
+* Retrieves relevant pages from wikipedia that answer the user's query.
 
 #### User-Defined Arguments
 
 ##### Optional
 
-- `lang` (str): Wikipedia language edition (default: `"en"`).  
-- `load_max_docs` (int): Maximum number of Wikipedia pages to load per topic.  
-- `doc_content_chars_max` (int): Max characters of text to keep per page (truncates for efficiency).  
-- `save_vector_store` (bool): Saves the vector store to a .json file.
-    - true → faster follow-ups on the same topics (single-topic reuse).
-    - false → better for multi-topic runs (rebuilds each time).
-- `vector_store_path` (str): Path to JSON store amd must end with .json. Used only when save_vector_store=true.
+- `lang` (str, default: "en"): Language code for Wikipedia articles.
+- `top_k_results` (int, default: 3): Maximum number of Wikipedia pages to load.
+- `doc_content_chars_max` (int, default: 4000): Maximum characters of text to keep per page (truncates for efficiency).
 
 ---
 
@@ -97,7 +89,6 @@ image classification tasks.
 
 When troubleshooting, check the following:
 
-- Confirm that the topics in wiki_queries exist on Wikipedia in the selected lang.
-- Verify that load_max_docs and doc_content_chars_max are set to values that don’t cause timeouts or memory issues or do not lose a lot of context.
-- If using save_vector_store: true, confirm that vector_store_path ends in .json and you query information only about very similar topics.
+- Ensure that the user queries are detailed with context.
+- Verify that top_k_results and doc_content_chars_max are set to values that don’t cause timeouts or memory issues or do not lose a lot of context.
 - Look at logs to ensure smooth delegation across tool calls and proper response integration.

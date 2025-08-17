@@ -10,15 +10,12 @@
 #
 # END COPYRIGHT
 
-import asyncio
-import inspect
 import logging
 from typing import Any
 from typing import Dict
 from typing import List
 
-import requests
-from langchain_community.document_loaders import WikipediaLoader
+from langchain_community.retrievers import WikipediaRetriever
 from langchain_core.documents import Document
 from neuro_san.interfaces.coded_tool import CodedTool
 
@@ -35,18 +32,15 @@ class WikipediaRag(CodedTool, BaseRag):
 
     async def async_invoke(self, args: Dict[str, Any], sly_data: Dict[str, Any]) -> str:
         """
-        Load Wikipedia articles based on queries, build a vector store, and run a query against it.
+        Retrieves relevant Wikipedia articles based on the provided query.
 
         :param args: Dictionary containing:
-          "query": search string
-          "wiki_queries": list of Wikipedia topics or a single topic string
-          "lang": language code for Wikipedia articles (default is "en")
-          "load_max_docs": maximum number of documents to load (default is 10)
-          "doc_content_chars_max": maximum number of characters to keep in each document (default is 1000)
-          "save_vector_store": boolean flag to save the vector store to a file
-          "vector_store_path": relative path to this file
+            "query": search string
+            "lang": language code for Wikipedia articles (default is "en")
+            "top_k_results": number of top results to return (default is 3)
+            "doc_content_chars_max": maximum number of characters to keep in each document (default is 4000)
         
-          :param sly_data: A dictionary whose keys are defined by the agent
+        :param sly_data: A dictionary whose keys are defined by the agent
             hierarchy, but whose values are meant to be kept out of the
             chat stream.
 
@@ -60,70 +54,27 @@ class WikipediaRag(CodedTool, BaseRag):
             Keys expected for this implementation are:
                 None
 
-        :return: Text result from querying the built vector store,
-            or an error message.
+        :return: A string containing the concatenated content of the retrieved documents.
         """
         # Extract arguments from the input dictionary
         query: str = args.get("query", "")
-        wiki_queries: List[str] = args.get("wiki_queries") or []
 
         # Validate presence of required inputs
         if not query:
             logger.error("Missing required input: 'query' (retrieval question).")
             return "❌ Missing required input: 'query'."
-        if not wiki_queries:
-            logger.error("Missing required input: 'wiki_queries' (Wikipedia topics).")
-            return "❌ Missing required input: 'wiki_queries' (list)."
 
-        wikipedia_loader_params = [
-            name for name in inspect.signature(WikipediaLoader.__init__).parameters if name != "self"
-        ]
-        loader_args: Dict[str, Any] = {k: v for k, v in args.items() if k in wikipedia_loader_params}
-        loader_args["wiki_queries"] = wiki_queries
+        # Initialize WikipediaRetriever with the provided arguments
+        retriever = WikipediaRetriever(
+            lang=str(args.get("lang", "en")),
+            top_k_results=int(args.get("top_k_results", 3)),
+            doc_content_chars_max=int(args.get("doc_content_chars_max", 4000)),
+        )
 
-        # Save the generated vector store as a JSON file if True
-        self.save_vector_store = bool(args.get("save_vector_store", False))
-
-        # Configure the vector store path
-        self.configure_vector_store_path(args.get("vector_store_path"))
-
-        # Prepare the vector store
-        vectorstore = await self.generate_vector_store(loader_args=loader_args)
-
-        # Run the query against the vector store
-        return await self.query_vectorstore(vectorstore, query)
+        return await self.query_retriever(retriever, query)
 
     async def load_documents(self, loader_args: Dict[str, Any]) -> List[Document]:
         """
-        Load Wikipedia articles based on provided queries.
-
-        :param loader_args: Dictionary containing 'wiki_queries' (list of Wikipedia topics)
-        :return: List of loaded Wikipedia documents
+        Unused for WikipediaRag since we query the retriever directly.
         """
-        docs: List[Document] = []
-        wiki_queries: List[str] = loader_args.pop("wiki_queries", [])
-
-        for topic in wiki_queries:
-            try:
-                logger.info("Loading Wikipedia docs for query: '%s'", topic)
-
-                per_topic_args = dict(loader_args)
-                per_topic_args["query"] = topic
-
-                loader = WikipediaLoader(**per_topic_args)
-                loaded = await loader.aload() if hasattr(loader, "aload") else loader.load()
-
-                docs.extend(loaded)
-                logger.info("Successfully loaded %d Wikipedia docs for '%s'", len(loaded), topic)
-
-            except ValueError as e:
-                logger.error("Invalid Wikipedia query '%s': %s", topic, e)
-            except requests.exceptions.RequestException as e:
-                logger.error("Network error while fetching '%s': %s", topic, e)
-            except asyncio.TimeoutError:
-                logger.error("Timed out while loading Wikipedia docs for '%s'", topic)
-
-        if not docs:
-            logger.warning("No Wikipedia documents were loaded for the provided queries: %s", wiki_queries)
-
-        return docs
+        return []
