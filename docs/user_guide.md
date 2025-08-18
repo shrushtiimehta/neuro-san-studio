@@ -784,19 +784,19 @@ To use tools from toolbox in your agent network, simply call them with field `to
         Example:
 
         ```hocon
-            "bing_search": {
+            "tavily_search": {
                 # Fully qualified class path of the tool to be instantiated.
-                "class": "langchain_community.tools.bing_search.BingSearchResults",
+                "class": "langchain_community.tools.tavily_search.TavilySearchResults",
 
                 # (Optional) URL for reference documentation about this tool.
-                "base_tool_info_url": "https://python.langchain.com/docs/integrations/tools/bing_search/",
+                "base_tool_info_url": "https://python.langchain.com/docs/integrations/tools/tavily_search/",
 
                 # Arguments for the tool's constructor.
                 "args": {
                     "api_wrapper": {
                         # If the argument should be instantiated as a class, specify it using the "class" key.
                         # This tells the system to create an instance of the provided class instead of passing it as-is.
-                        "class": "langchain_community.utilities.BingSearchAPIWrapper"
+                        "class": "langchain_community.utilities.tavily_search.TavilySearchAPIWrapper"
                     },
                 }
             }
