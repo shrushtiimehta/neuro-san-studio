@@ -13,10 +13,8 @@
 import logging
 from typing import Any
 from typing import Dict
-from typing import List
 
 from langchain_community.retrievers import ArxivRetriever
-from langchain_core.documents import Document
 from neuro_san.interfaces.coded_tool import CodedTool
 
 from .base_rag import BaseRag
@@ -25,7 +23,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class ArxivRag(CodedTool, BaseRag):
+class ArxivRag(CodedTool):
     """
     CodedTool implementation which provides a way to do RAG on arXiv papers.
     """
@@ -75,10 +73,4 @@ class ArxivRag(CodedTool, BaseRag):
             continue_on_failure=bool(args.get("continue_on_failure", True)),
         )
 
-        return await self.query_retriever(retriever, query)
-
-    async def load_documents(self, loader_args: Dict[str, Any]) -> List[Document]:
-        """
-        Unused for ArxivRag since we query the retriever directly.
-        """
-        return []
+        return await BaseRag.query_retriever(retriever, query)
