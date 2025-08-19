@@ -34,6 +34,7 @@ Joe's Gas Station offers coffee anytime.
 
 If you need coffee at a specific time or more details, please let me know.
 ```
+Notice how the answer does NOT mention Jack's Liquor Store, because it doesn't serve coffee.
 
 Following-up: 
 
@@ -70,4 +71,13 @@ AI:
 At 2 am, you can get coffee at Joe's Gas Station, which is open 24/7.
 
 Bob's Coffee Shop and Henry's Fast Food are closed at this time.
+```
+
+Bonus question:
+```text
+Human:
+Where can I find coffee liquor?
+
+AI:
+You can buy coffee liquor at Jack's Liquor Store.
 ```
