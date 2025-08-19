@@ -13,10 +13,8 @@
 import logging
 from typing import Any
 from typing import Dict
-from typing import List
 
 from langchain_community.retrievers import WikipediaRetriever
-from langchain_core.documents import Document
 from neuro_san.interfaces.coded_tool import CodedTool
 
 from .base_rag import BaseRag
@@ -25,7 +23,7 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
-class WikipediaRag(CodedTool, BaseRag):
+class WikipediaRag(CodedTool):
     """
     CodedTool implementation which provides a way to do RAG on Wikipedia articles.
     """
@@ -71,10 +69,4 @@ class WikipediaRag(CodedTool, BaseRag):
             doc_content_chars_max=int(args.get("doc_content_chars_max", 4000)),
         )
 
-        return await self.query_retriever(retriever, query)
-
-    async def load_documents(self, loader_args: Dict[str, Any]) -> List[Document]:
-        """
-        Unused for WikipediaRag since we query the retriever directly.
-        """
-        return []
+        return await BaseRag.query_retriever(retriever, query)
