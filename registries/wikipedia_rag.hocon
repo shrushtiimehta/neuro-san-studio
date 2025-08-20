@@ -1,0 +1,63 @@
+
+# Copyright (C) 2023-2025 Cognizant Digital Business, Evolutionary AI.
+# All Rights Reserved.
+# Issued under the Academic Public License.
+#
+# You can be released from the terms, and requirements of the Academic Public
+# License by purchasing a commercial license.
+# Purchase of a commercial license is mandatory for any use of the
+# neuro-san SDK Software in commercial settings.
+#
+# END COPYRIGHT
+
+{
+    "llm_config": {
+        "model_name": "gpt-4o",
+    },
+
+    "tools": [
+        {
+            "name": "Wikipedia RAG Assistant",
+
+            "function": {
+              "description": "Answer caller's query with answers from tools.",
+            },
+
+            "instructions": """Always use your tool to respond to the inquiry.
+            If the tool failed or unavailable, just notify the user.
+            Do not attempt to answer the question by yourself.""",
+
+            "tools": ["rag_retriever"]
+        },
+        # RAG tool that retrieves relevant pages from Wikipedia to answer queries.
+        {
+            "name": "rag_retriever",
+
+            "toolbox": "wikipedia_rag",
+
+            "args": {
+                # User-defined arguments for the tool
+
+                # --- Optional Arguments ---
+
+                # Wikipedia language edition to use
+                # e.g., "en" for English, "es" for Spanish, "fr" for French
+                "lang": "en",
+
+                # Maximum number of Wikipedia pages to load per query term
+                # Start small and increase the value only if answers lack context
+                # Recommended values:
+                # Focused Q&A (well-known topic): 3–5
+                # Broader overview / brainstorming / research scan: 8–12
+                "top_k_results": "3",
+
+                # Per-document character cap to keep long pages from inflating context/cost
+                # Token math: ~1 token ≈ 4 chars
+                # Total doc tokens ≈ (K * doc_content_chars_max) / 4  (K = top_k_results)
+                # Budget docs to a small share of the model’s max tokens (aim ~6–10%, increase if answers lack context)
+                # Need more coverage? lower per-doc cap; Need more detail per doc? lower K
+                "doc_content_chars_max": "4000",
+            }
+        }
+    ]
+}

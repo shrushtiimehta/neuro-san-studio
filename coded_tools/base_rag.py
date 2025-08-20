@@ -9,6 +9,7 @@
 #
 # END COPYRIGHT
 
+import asyncio
 import logging
 import os
 import re
@@ -298,6 +299,21 @@ class BaseRag(ABC):
             # Create a retriever interface from the vector store
             retriever: VectorStoreRetriever = vectorstore.as_retriever()
 
+            return await self.query_retriever(retriever, query)
+
+        except AttributeError:
+            return "Failed to create vector store. Please check the log for more information.\n"
+
+    @staticmethod
+    async def query_retriever(retriever: Any, query: str) -> str:
+        """
+        Query the retriever with the given query string and return the results.
+
+        :param retriever: The retriever interface to query
+        :param query: The user query to search for relevant documents
+        :return: Concatenated text content of the retrieved documents
+        """
+        try:
             # Perform an asynchronous similarity search
             results: List[Document] = await retriever.ainvoke(query)
 
@@ -307,5 +323,5 @@ class BaseRag(ABC):
             # Concatenate the content of all retrieved documents
             return "\n\n".join(doc.page_content for doc in results)
 
-        except AttributeError:
-            return "Failed to create vector store. Please check the log for more information.\n"
+        except asyncio.TimeoutError as e:
+            return f"Timed out while querying retriever: {e}"
