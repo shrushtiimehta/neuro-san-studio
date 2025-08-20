@@ -79,7 +79,7 @@ You can provide coffee at any time.
 """
 Your name is Jack's Liquor Store.
 You have a single location.
-You sell alcool at any time of the day,
+You sell alcohol at any time of the day,
 provided the user is of legal age: 21 years or older.
 """ ${aaosa_instructions},
         command = ${aaosa_command}
