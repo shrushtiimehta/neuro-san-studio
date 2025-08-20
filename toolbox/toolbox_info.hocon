@@ -255,6 +255,22 @@
             "required": ["query"]
         }
     },
+    
+    "arxiv_rag": {
+        # This is a coded tool for RAG on Arxiv Articles.
+        "class": "arxiv_rag.ArxivRag",
+        "description": "Retrieve information from arXiv and answer a query using RAG.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Retrieval question to answer over arXiv documents"
+                },
+            },
+            "required": ["query"]
+        }
+    }
 
     # ---------- Search Tools ----------
 

@@ -27,6 +27,7 @@ Here are a few examples ordered by level of complexity.
     * [Confluence RAG Assistant](#confluence-rag-assistant)
     * [Agentic RAG Assistant](#agentic-rag-assistant)
     * [Wikipedia RAG Assistant](#wikipedia-rag-assistant)
+    * [ArXiv RAG Assistant](#arxiv-rag-assistant)
   * [🏢 Industry-Specific Examples](#-industry-specific-examples)
     * [Intranet Agents](#intranet-agents)
     * [Intranet Agents With Tools](#intranet-agents-with-tools)
@@ -206,6 +207,13 @@ to specialized tools and compiles responses into clear, helpful answers.
 
 [Wikipedia RAG Assistant](./examples/wikipedia_rag.md) answers user queries by searching Wikipedia, fetching the most
 relevant articles, and synthesizing their content into accurate, detailed answers (no vector store required).
+
+**Tags:** `tool`, `RAG`
+
+### ArXiv RAG Assistant
+
+[ArXiv RAG Assistant](./examples/arxiv_rag.md) is an agent-based system that queries arXiv, pulls the best-matching
+research papers (abstracts or full text) and produces accurate responses to user queries (no vector store needed).
 
 **Tags:** `tool`, `RAG`
 
