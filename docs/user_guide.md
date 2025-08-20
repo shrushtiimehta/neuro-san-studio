@@ -197,7 +197,8 @@ You can specify it at two levels:
 * **Agent-level**: Overrides the network-level configuration for a specific agent.
 
 Neuro-SAN includes several predefined LLM providers and models. To use one of these, set the `model_name` key to
-the name of the model you want. A full list of available models can be found in the
+the name of the model you want. In addition, model-specific parameters (such as `temperature`, `max_tokens`, etc.) can be set alongside `model_name`.
+A full list of available models and parameters can be found in the
 [default LLM info file](https://github.com/cognizant-ai-lab/neuro-san/blob/main/neuro_san/internals/run_context/langchain/llms/default_llm_info.hocon).
 
 > ⚠️ Different providers may require unique configurations or environment variables.
