@@ -486,7 +486,7 @@ Neuro-San supports two types of tools that agents can call during execution:
 and integrate it with the agent.
 2. **Prebuilt Tools (via toolbox)** – Tools that are already implemented and configured for reuse. These include:
 
-LangChain’s `BaseTool` implementations (e.g., `bing_search`, `requests_get`)
+LangChain’s `BaseTool` implementations (e.g., `tavily_search`, `requests_get`)
 
 Shared `CodedTool` implementations that are registered in the toolbox config file
 
@@ -669,7 +669,7 @@ These tools are already integrated and can be plugged into agents directly via c
 
 Toolbox tools come in two forms:
 
-* LangChain Tools – Built-in tools like bing_search, requests_get, etc., implemented using LangChain’s BaseTool.
+* LangChain Tools – Built-in tools like tavily_search, requests_get, etc., implemented using LangChain’s BaseTool.
 
 * Shared Coded Tools – Predefined tools using the CodedTool interface (Python classes) that are already available and
 registered in your Toolbox config.
@@ -685,7 +685,7 @@ To use any tool from the Toolbox, simply reference it in the toolbox field of yo
 {
   "name": "search_agent",
   "instructions": "Use web search to find information for the user.",
-  "toolbox": "bing_search"
+  "toolbox": "tavily_search"
 }
 ```
 
@@ -702,11 +702,11 @@ don’t need to redefine it in the agent network — just reference it by name.
 ##### LangChain Example
 
 ```json
-"bing_search": {
-  "class": "langchain_community.tools.bing_search.BingSearchResults",
+"tavily_search": {
+  "class": "langchain_community.tools.tavily_search.TavilySearchResults",
   "args": {
     "api_wrapper": {
-      "class": "langchain_community.utilities.BingSearchAPIWrapper"
+      "class": "langchain_community.utilities.tavily_search.TavilySearchAPIWrapper"
     }
   }
 }
