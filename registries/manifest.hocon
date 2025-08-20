@@ -58,8 +58,6 @@
     "pdf_rag.hocon": true,
     "agentic_rag.hocon": false,
     "kwik_agents.hocon": false,
-    "wikipedia_rag.hocon": false,
-    "arxiv_rag.hocon": false,
 
     # Requirement to use this agent network:
     # - langchain-openai >= 0.3.26
@@ -105,6 +103,14 @@
     # Once you've downloaded the credentials.json file and put it in the top level of this repo,
     # you can start using the agent network.
     "gmail.hocon": false,
+
+    # To use this agent network, start by installing the required package:
+    #     pip install wikipedia
+    "wikipedia_rag.hocon": false,
+
+    # To use this agent network, start by installing the required package:
+    #     pip install arxiv
+    "arxiv_rag.hocon": false,
 
 
     # Use cases

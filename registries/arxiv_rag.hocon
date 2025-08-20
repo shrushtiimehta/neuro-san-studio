@@ -10,6 +10,9 @@
 #
 # END COPYRIGHT
 
+# To use this agent network, start by installing the required package:
+#     pip install arxiv
+
 {
     "llm_config": {
         "model_name": "gpt-4o",
