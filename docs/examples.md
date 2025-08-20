@@ -12,6 +12,7 @@ Here are a few examples ordered by level of complexity.
     * [Music Nerd Pro Local](#music-nerd-pro-local)
     * [Music Nerd Pro Sly](#music-nerd-pro-sly)
     * [Music Nerd Pro Sly Local](#music-nerd-pro-sly-local)
+    * [Coffee Finder](#coffee-finder)
   * [🧰 Tool Integration Examples](#-tool-integration-examples)
     * [Anthropic Code Execution](#anthropic-code-execution)
     * [Anthropic Web Search](#anthropic-web-search)
@@ -95,6 +96,15 @@ This is a good way to learn about how to manage a state in a conversation.
 a **tool-calling** LLM that runs locally with Ollama.
 
 **Tags:** `tool`, `sly_data`, `llm_config`
+
+### Coffee Finder
+
+[Coffee Finder](./examples/coffee_finder.md) is an agent network that helps
+users find coffee at any time of the day. It shows how multiple agents can
+provide the same service and how the AAOSA instructions can be used to choose
+the best option depending on the context.
+
+**Tags:** `AAOSA`
 
 ## 🧰 Tool Integration Examples
 

@@ -23,6 +23,7 @@
     "hello_world.hocon": true,
     "advanced_calculator.hocon": false,
     "smart_home.hocon": true,
+    "coffee_finder.hocon": true,
 
     # Tool integration examples
 
