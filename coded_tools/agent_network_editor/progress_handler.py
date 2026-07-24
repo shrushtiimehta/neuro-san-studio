@@ -90,7 +90,7 @@ class ProgressHandler:
         args: dict[str, Any],
         sly_data: dict[str, Any],
         network_definition: dict[str, Any],
-        name: str = None,
+        name: str | None = None,
         force: bool = False,
     ):
         """
@@ -250,7 +250,7 @@ class ProgressHandler:
         progress_reporter: AgentProgressReporter,
         sly_data: dict[str, Any],
         network_definition: dict[str, Any],
-        name: str = None,
+        name: str | None = None,
     ):
         """
         Format the network definition per AGENT_NETWORK_DESIGNER_PROGRESS_STYLE and send it.
