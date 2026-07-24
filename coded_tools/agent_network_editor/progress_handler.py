@@ -168,7 +168,7 @@ class ProgressHandler:
             # end-of-run flush retries with the freshest state; last_progress
             # stays advanced so the throttle window is respected either way.
             logger = AndLogger(logging.getLogger(ProgressHandler.__name__))
-            logger.error("Progress report failed; deferring to end-of-run flush: %s", exception)
+            logger.error("Progress report failed; deferring to end-of-run flush: %s", exception, exc_info=True)
             async with await SlyDataLock.get_lock(sly_data, PROGRESS_HANDLER_LOCK):
                 progress_handler = sly_data.get(PROGRESS_HANDLER)
                 # Only re-stash if nothing newer happened meanwhile: a non-None
@@ -248,7 +248,7 @@ class ProgressHandler:
             # message after the network was already successfully built (e.g. when
             # the client disconnected and the outgoing queue is already shut down).
             logger = AndLogger(logging.getLogger(ProgressHandler.__name__))
-            logger.error("Final progress flush failed: %s", exception)
+            logger.error("Final progress flush failed: %s", exception, exc_info=True)
 
     @staticmethod
     async def _send_report(
