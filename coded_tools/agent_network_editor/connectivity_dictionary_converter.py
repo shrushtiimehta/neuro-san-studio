@@ -46,6 +46,10 @@ class ConnectivityDictionaryConverter(DictionaryConverter):
         """
         Constructor
         :param include_keys: A list of keys to include in the conversion
+        :param toolbox_factory: An optional pre-load()-ed ContextTypeToolboxFactory,
+                passed through to the ConnectivityReporter so it does not construct
+                and load one from disk per from_dict() call. When None, the reporter
+                falls back to creating its own.
         """
         self.include_keys = include_keys
         if include_keys is None:

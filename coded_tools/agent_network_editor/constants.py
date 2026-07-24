@@ -40,14 +40,10 @@ SUBNETWORKS: str = "subnetworks"
 # Cached dict mapping toolbox tool name to its description.
 TOOLBOX_INFO: str = "toolbox_info"
 
-# Cached ToolboxFactory instance used during ProgressHandler reporting.
-TOOLBOX_FACTORY: str = "toolbox_factory"
-
 # Cached ProgressHandler instance controls AGENT_PROGRESS reporting throttling
 PROGRESS_HANDLER: str = "progress_handler"
 
-# Names of the sly_data locks (see SlyDataLock.get_lock) guarding the entries above.
+# Name of the sly_data lock (see SlyDataLock.get_lock) guarding the entry above.
 # Defined here because SlyDataLock creates a fresh lock for any unknown name —
 # a typo'd literal would silently hand out a second, independent lock.
 PROGRESS_HANDLER_LOCK: str = "progress_handler_lock"
-TOOLBOX_FACTORY_LOCK: str = "toolbox_factory_lock"

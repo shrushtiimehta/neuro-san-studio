@@ -15,7 +15,9 @@
 # END COPYRIGHT
 
 import logging
+from asyncio import to_thread
 from os import environ
+from threading import Lock
 from time import perf_counter
 from typing import Any
 
@@ -29,8 +31,6 @@ from coded_tools.agent_network_editor.constants import AGENT_NETWORK_DEFINITION
 from coded_tools.agent_network_editor.constants import AGENT_NETWORK_NAME
 from coded_tools.agent_network_editor.constants import PROGRESS_HANDLER
 from coded_tools.agent_network_editor.constants import PROGRESS_HANDLER_LOCK
-from coded_tools.agent_network_editor.constants import TOOLBOX_FACTORY
-from coded_tools.agent_network_editor.constants import TOOLBOX_FACTORY_LOCK
 from coded_tools.agent_network_editor.sly_data_lock import SlyDataLock
 
 
@@ -40,6 +40,26 @@ class ProgressHandler:
     """
 
     PROGRESS_THROTTLE_SECONDS: float = 5.0
+
+    # Process-wide cache of the loaded ToolboxFactory used for connectivity-style
+    # progress conversion. The toolbox info it loads is static for the life of
+    # the process (the default file ships inside the neuro-san package and the
+    # optional override comes from the AGENT_TOOLBOX_INFO_FILE env var, read at
+    # startup), so one shared, effectively read-only instance is enough.
+    #
+    # Class scope rather than sly_data scope matters here: sly_data is scoped
+    # per conversation *and* per network, and AND spans two progress-reporting
+    # networks (agent_network_editor and agent_network_instructions_editor), so
+    # a sly_data-cached factory re-paid the file read + HOCON parse twice per
+    # request, and again for every new conversation.
+    _toolbox_factory: ContextTypeToolboxFactory | None = None
+
+    # A threading.Lock rather than an asyncio.Lock (or SlyDataLock): the cache
+    # is shared across requests, whose coded tools may each run on their own
+    # event loop in their own thread, and an asyncio.Lock cannot be shared
+    # across event loops. Waiting on it never stalls an event loop because
+    # callers reach _get_toolbox_factory() through asyncio.to_thread().
+    _toolbox_factory_lock: Lock = Lock()
 
     def __init__(self):
         """
@@ -117,9 +137,9 @@ class ProgressHandler:
                 Expected to contain a "progress_reporter" entry; without one
                 there is nothing to send through and the call is a no-op.
         :param sly_data: The sly_data dictionary on which the throttling state
-                (ProgressHandler) and the ToolboxFactory cache are kept.
+                (ProgressHandler) is kept.
                 Required — every caller has one, and reporting without it would
-                silently skip both the throttle and the cache.
+                silently skip the throttle.
         :param network_definition: The network definition dictionary
         :param name: The name of the agent network. If None, will not be reported in progress.
         :param force: When True, bypass the throttle and always send.
@@ -160,7 +180,7 @@ class ProgressHandler:
             attempt_stamp: float = progress_handler.last_progress
 
         try:
-            await ProgressHandler._send_report(progress_reporter, sly_data, network_definition, name)
+            await ProgressHandler._send_report(progress_reporter, network_definition, name)
         except Exception as exception:  # pylint: disable=broad-exception-caught
             # Best-effort telemetry: a failed send (toolbox file I/O, connectivity
             # conversion, journal write on a closed stream) must not fail the tool
@@ -239,9 +259,7 @@ class ProgressHandler:
             return
 
         try:
-            await ProgressHandler._send_report(
-                pending_reporter, sly_data, network_definition, sly_data.get(AGENT_NETWORK_NAME)
-            )
+            await ProgressHandler._send_report(pending_reporter, network_definition, sly_data.get(AGENT_NETWORK_NAME))
         except Exception as exception:  # pylint: disable=broad-exception-caught
             # Best-effort: this hook runs as a langgraph node, and an exception
             # escaping it would replace the run's real final answer with an error
@@ -250,10 +268,34 @@ class ProgressHandler:
             logger = AndLogger(logging.getLogger(ProgressHandler.__name__))
             logger.error("Final progress flush failed: %s", exception, exc_info=True)
 
+    @classmethod
+    def _get_toolbox_factory(cls) -> ContextTypeToolboxFactory:
+        """
+        Get the process-wide ToolboxFactory, creating and load()-ing it on first call.
+
+        Synchronous by design — the first call does file I/O plus a HOCON parse,
+        and later calls may briefly wait on the lock — so async callers must go
+        through asyncio.to_thread() to keep that work off the event loop.
+
+        :return: The shared, already-load()-ed ToolboxFactory instance.
+        """
+        with cls._toolbox_factory_lock:
+            if cls._toolbox_factory is None:
+                # The empty config dict is equivalent to the None that
+                # DesignerNetworkInspector.get_config() returns: the context
+                # type defaults to "langchain" and any AGENT_TOOLBOX_INFO_FILE
+                # env var override is still honored inside ToolboxFactory.
+                factory: ContextTypeToolboxFactory = MasterToolboxFactory.create_toolbox_factory({})
+                factory.load()
+                # Publish only after load() succeeds: on failure (e.g. a bad
+                # AGENT_TOOLBOX_INFO_FILE) the cache stays empty and the next
+                # report retries instead of serving a half-initialized factory.
+                cls._toolbox_factory = factory
+        return cls._toolbox_factory
+
     @staticmethod
     async def _send_report(
         progress_reporter: AgentProgressReporter,
-        sly_data: dict[str, Any],
         network_definition: dict[str, Any],
         name: str | None = None,
     ):
@@ -262,11 +304,9 @@ class ProgressHandler:
 
         This is the unthrottled sending path shared by report_progress() and
         flush_pending(). Throttling decisions and error containment are the
-        callers' responsibility; both callers guarantee a non-None reporter
-        and sly_data.
+        callers' responsibility; both callers guarantee a non-None reporter.
 
         :param progress_reporter: The AgentProgressReporter to send the progress through
-        :param sly_data: The sly_data dictionary used for the ToolboxFactory cache
         :param network_definition: The network definition dictionary
         :param name: The name of the agent network. If None, will not be reported in progress.
         """
@@ -280,17 +320,10 @@ class ProgressHandler:
             # that it already knows how to render.  Using the different key name allows the AGENT_PROGRESS
             # dictionary to look just like a ConnectivityResponse from the service.
 
-            # Get a cached toolbox factory so we don't have to read info from a file every time
-            toolbox_factory: ContextTypeToolboxFactory | None = sly_data.get(TOOLBOX_FACTORY)
-            if toolbox_factory is None:
-                async with await SlyDataLock.get_lock(sly_data, TOOLBOX_FACTORY_LOCK):
-                    toolbox_factory: ContextTypeToolboxFactory | None = sly_data.get(TOOLBOX_FACTORY)
-                    if toolbox_factory is None:
-                        # DEF - not sure if this empty dict is good enough
-                        empty: dict[str, Any] = {}
-                        toolbox_factory: ContextTypeToolboxFactory = MasterToolboxFactory.create_toolbox_factory(empty)
-                        toolbox_factory.load()
-                        sly_data[TOOLBOX_FACTORY] = toolbox_factory
+            # Get the process-wide cached ToolboxFactory: only the first call in
+            # the process pays for the file read + HOCON parse, and to_thread()
+            # keeps that parse (and any wait on its lock) off the event loop.
+            toolbox_factory: ContextTypeToolboxFactory = await to_thread(ProgressHandler._get_toolbox_factory)
 
             # Do the conversion
             use_key: str = "connectivity_info"
