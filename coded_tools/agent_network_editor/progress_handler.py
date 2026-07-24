@@ -234,7 +234,7 @@ class ProgressHandler:
         # definition or a non-dict shape (the persistence middleware can rewrite
         # this sly_data key to a connectivity-style list at end of run) cannot be
         # converted and is skipped.
-        network_definition: dict[str, Any] = sly_data.get(AGENT_NETWORK_DEFINITION)
+        network_definition: dict[str, Any] | list[dict[str, Any]] | None = sly_data.get(AGENT_NETWORK_DEFINITION)
         if not isinstance(network_definition, dict):
             return
 
