@@ -17,13 +17,10 @@
 import logging
 from asyncio import to_thread
 from os import environ
-from threading import Lock
 from time import perf_counter
 from typing import Any
 
 from neuro_san.interfaces.agent_progress_reporter import AgentProgressReporter
-from neuro_san.internals.interfaces.context_type_toolbox_factory import ContextTypeToolboxFactory
-from neuro_san.internals.run_context.factory.master_toolbox_factory import MasterToolboxFactory
 
 from coded_tools.agent_network_editor.and_logger import AndLogger
 from coded_tools.agent_network_editor.connectivity_dictionary_converter import ConnectivityDictionaryConverter
@@ -40,26 +37,6 @@ class ProgressHandler:
     """
 
     PROGRESS_THROTTLE_SECONDS: float = 5.0
-
-    # Process-wide cache of the loaded ToolboxFactory used for connectivity-style
-    # progress conversion. The toolbox info it loads is static for the life of
-    # the process (the default file ships inside the neuro-san package and the
-    # optional override comes from the AGENT_TOOLBOX_INFO_FILE env var, read at
-    # startup), so one shared, effectively read-only instance is enough.
-    #
-    # Class scope rather than sly_data scope matters here: sly_data is scoped
-    # per conversation *and* per network, and AND spans two progress-reporting
-    # networks (agent_network_editor and agent_network_instructions_editor), so
-    # a sly_data-cached factory re-paid the file read + HOCON parse twice per
-    # request, and again for every new conversation.
-    _toolbox_factory: ContextTypeToolboxFactory | None = None
-
-    # A threading.Lock rather than an asyncio.Lock (or SlyDataLock): the cache
-    # is shared across requests, whose coded tools may each run on their own
-    # event loop in their own thread, and an asyncio.Lock cannot be shared
-    # across event loops. Waiting on it never stalls an event loop because
-    # callers reach _get_toolbox_factory() through asyncio.to_thread().
-    _toolbox_factory_lock: Lock = Lock()
 
     def __init__(self):
         """
@@ -268,31 +245,6 @@ class ProgressHandler:
             logger = AndLogger(logging.getLogger(ProgressHandler.__name__))
             logger.error("Final progress flush failed: %s", exception, exc_info=True)
 
-    @classmethod
-    def _get_toolbox_factory(cls) -> ContextTypeToolboxFactory:
-        """
-        Get the process-wide ToolboxFactory, creating and load()-ing it on first call.
-
-        Synchronous by design — the first call does file I/O plus a HOCON parse,
-        and later calls may briefly wait on the lock — so async callers must go
-        through asyncio.to_thread() to keep that work off the event loop.
-
-        :return: The shared, already-load()-ed ToolboxFactory instance.
-        """
-        with cls._toolbox_factory_lock:
-            if cls._toolbox_factory is None:
-                # The empty config dict is equivalent to the None that
-                # DesignerNetworkInspector.get_config() returns: the context
-                # type defaults to "langchain" and any AGENT_TOOLBOX_INFO_FILE
-                # env var override is still honored inside ToolboxFactory.
-                factory: ContextTypeToolboxFactory = MasterToolboxFactory.create_toolbox_factory({})
-                factory.load()
-                # Publish only after load() succeeds: on failure (e.g. a bad
-                # AGENT_TOOLBOX_INFO_FILE) the cache stays empty and the next
-                # report retries instead of serving a half-initialized factory.
-                cls._toolbox_factory = factory
-        return cls._toolbox_factory
-
     @staticmethod
     async def _send_report(
         progress_reporter: AgentProgressReporter,
@@ -320,14 +272,19 @@ class ProgressHandler:
             # that it already knows how to render.  Using the different key name allows the AGENT_PROGRESS
             # dictionary to look just like a ConnectivityResponse from the service.
 
-            # Get the process-wide cached ToolboxFactory: only the first call in
-            # the process pays for the file read + HOCON parse, and to_thread()
-            # keeps that parse (and any wait on its lock) off the event loop.
-            toolbox_factory: ContextTypeToolboxFactory = await to_thread(ProgressHandler._get_toolbox_factory)
+            # Warm the process-wide ToolboxFactory cache that from_dict() falls
+            # back to. Only the first call in the process pays for the file
+            # read + HOCON parse, and to_thread() keeps that parse off the
+            # event loop; once warm, the peek and the fallback inside
+            # from_dict() are lock-free attribute reads, so the steady-state
+            # path has no thread hop, no lock traffic, and no await between
+            # the throttle stamp and the conversion snapshot.
+            if ConnectivityDictionaryConverter.peek_shared_toolbox_factory() is None:
+                await to_thread(ConnectivityDictionaryConverter.get_shared_toolbox_factory)
 
             # Do the conversion
             use_key: str = "connectivity_info"
-            converter = ConnectivityDictionaryConverter(toolbox_factory=toolbox_factory)
+            converter = ConnectivityDictionaryConverter()
             use_network_definition = converter.from_dict(network_definition)
 
         elif agent_progress_style == "internal":
