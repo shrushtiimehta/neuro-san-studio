@@ -281,10 +281,10 @@ class ProgressHandler:
             # dictionary to look just like a ConnectivityResponse from the service.
 
             # Get a cached toolbox factory so we don't have to read info from a file every time
-            toolbox_factory: ContextTypeToolboxFactory = sly_data.get(TOOLBOX_FACTORY)
+            toolbox_factory: ContextTypeToolboxFactory | None = sly_data.get(TOOLBOX_FACTORY)
             if toolbox_factory is None:
                 async with await SlyDataLock.get_lock(sly_data, TOOLBOX_FACTORY_LOCK):
-                    toolbox_factory: ContextTypeToolboxFactory = sly_data.get(TOOLBOX_FACTORY)
+                    toolbox_factory: ContextTypeToolboxFactory | None = sly_data.get(TOOLBOX_FACTORY)
                     if toolbox_factory is None:
                         # DEF - not sure if this empty dict is good enough
                         empty: dict[str, Any] = {}
