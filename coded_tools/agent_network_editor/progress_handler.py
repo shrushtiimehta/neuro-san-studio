@@ -45,7 +45,12 @@ class ProgressHandler:
         """
         Constructor
         """
-        # Timestamp (per perf_counter()) of the last progress report actually sent.
+        # Timestamp (per perf_counter()) of the last time the throttle granted a
+        # send — stamped when a report passes should_report() or when a pending
+        # flush is consumed, i.e. just before the send itself runs, not after it
+        # completes. A failed send deliberately keeps the stamp so the throttle
+        # window is respected either way (see the failure path in
+        # report_progress(), which re-stashes the reporter instead).
         # Initialized to -inf so the very first report is always allowed through:
         # perf_counter()'s epoch is unspecified (on most platforms it is "seconds
         # since boot"), so initializing to 0.0 could wrongly throttle the first
@@ -134,7 +139,7 @@ class ProgressHandler:
             return
 
         async with await SlyDataLock.get_lock(sly_data, PROGRESS_HANDLER_LOCK):
-            progress_handler: ProgressHandler = sly_data.get(PROGRESS_HANDLER)
+            progress_handler: ProgressHandler | None = sly_data.get(PROGRESS_HANDLER)
             if progress_handler is None:
                 progress_handler = ProgressHandler()
                 sly_data[PROGRESS_HANDLER] = progress_handler
@@ -206,7 +211,7 @@ class ProgressHandler:
 
         pending_reporter: AgentProgressReporter | None = None
         async with await SlyDataLock.get_lock(sly_data, PROGRESS_HANDLER_LOCK):
-            progress_handler: ProgressHandler = sly_data.get(PROGRESS_HANDLER)
+            progress_handler: ProgressHandler | None = sly_data.get(PROGRESS_HANDLER)
             if progress_handler is None or progress_handler.pending_reporter is None:
                 # Either nothing was ever reported on this sly_data, or the most
                 # recent report went out unthrottled — the client is up to date.
