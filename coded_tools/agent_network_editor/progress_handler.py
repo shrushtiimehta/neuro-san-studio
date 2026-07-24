@@ -18,7 +18,6 @@ import logging
 from os import environ
 from time import perf_counter
 from typing import Any
-from typing import Dict
 
 from neuro_san.interfaces.agent_progress_reporter import AgentProgressReporter
 from neuro_san.internals.interfaces.context_type_toolbox_factory import ContextTypeToolboxFactory
@@ -63,7 +62,7 @@ class ProgressHandler:
         # always sends the freshest state and the (potentially expensive)
         # connectivity conversion is paid only once no matter how many reports
         # were suppressed in between.
-        self.pending_reporter: AgentProgressReporter = None
+        self.pending_reporter: AgentProgressReporter | None = None
 
     def should_report(self, force: bool = False) -> bool:
         """
@@ -89,7 +88,7 @@ class ProgressHandler:
     @staticmethod
     async def report_progress(
         args: dict[str, Any],
-        sly_data: Dict[str, Any],
+        sly_data: dict[str, Any],
         network_definition: dict[str, Any],
         name: str = None,
         force: bool = False,
@@ -126,7 +125,7 @@ class ProgressHandler:
                 (including subnetwork edits whose own reports were throttled)
                 before each designer model call.
         """
-        progress_reporter: AgentProgressReporter = args.get("progress_reporter")
+        progress_reporter: AgentProgressReporter | None = args.get("progress_reporter")
         if progress_reporter is None:
             # Nothing to send through. Checked before any throttle bookkeeping so
             # a reporter-less call can never consume the throttle slot or clobber
@@ -169,7 +168,7 @@ class ProgressHandler:
                     progress_handler.pending_reporter = progress_reporter
 
     @staticmethod
-    async def flush_pending(sly_data: Dict[str, Any]):
+    async def flush_pending(sly_data: dict[str, Any] | None):
         """
         Send the last throttled progress report, if any.
 
@@ -194,7 +193,7 @@ class ProgressHandler:
         if sly_data is None:
             return
 
-        pending_reporter: AgentProgressReporter = None
+        pending_reporter: AgentProgressReporter | None = None
         async with await SlyDataLock.get_lock(sly_data, PROGRESS_HANDLER_LOCK):
             progress_handler: ProgressHandler = sly_data.get(PROGRESS_HANDLER)
             if progress_handler is None or progress_handler.pending_reporter is None:
@@ -238,7 +237,7 @@ class ProgressHandler:
     @staticmethod
     async def _send_report(
         progress_reporter: AgentProgressReporter,
-        sly_data: Dict[str, Any],
+        sly_data: dict[str, Any],
         network_definition: dict[str, Any],
         name: str = None,
     ):
@@ -272,7 +271,7 @@ class ProgressHandler:
                     toolbox_factory: ContextTypeToolboxFactory = sly_data.get(TOOLBOX_FACTORY)
                     if toolbox_factory is None:
                         # DEF - not sure if this empty dict is good enough
-                        empty: Dict[str, Any] = {}
+                        empty: dict[str, Any] = {}
                         toolbox_factory: ContextTypeToolboxFactory = MasterToolboxFactory.create_toolbox_factory(empty)
                         toolbox_factory.load()
                         sly_data[TOOLBOX_FACTORY] = toolbox_factory
