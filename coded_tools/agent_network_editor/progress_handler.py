@@ -150,6 +150,9 @@ class ProgressHandler:
             # We are sending now, so any previously suppressed report is
             # superseded by this one (which carries same-or-newer state).
             progress_handler.pending_reporter = None
+            # Remember this attempt's send stamp so the failure path below can
+            # tell whether a newer send completed while this one was in flight.
+            attempt_stamp: float = progress_handler.last_progress
 
         try:
             await ProgressHandler._send_report(progress_reporter, sly_data, network_definition, name)
@@ -163,8 +166,16 @@ class ProgressHandler:
             logger.error("Progress report failed; deferring to end-of-run flush: %s", exception)
             async with await SlyDataLock.get_lock(sly_data, PROGRESS_HANDLER_LOCK):
                 progress_handler = sly_data.get(PROGRESS_HANDLER)
-                # Only re-stash if nothing newer was stashed (or sent) meanwhile.
-                if progress_handler is not None and progress_handler.pending_reporter is None:
+                # Only re-stash if nothing newer happened meanwhile: a non-None
+                # pending_reporter means a newer throttled report is already
+                # stashed, and a last_progress advanced past this attempt's stamp
+                # means a newer send already delivered same-or-newer state — in
+                # either case re-stashing would only cause a redundant flush.
+                if (
+                    progress_handler is not None
+                    and progress_handler.pending_reporter is None
+                    and progress_handler.last_progress == attempt_stamp
+                ):
                     progress_handler.pending_reporter = progress_reporter
 
     @staticmethod
