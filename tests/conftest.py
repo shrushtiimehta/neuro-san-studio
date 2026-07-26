@@ -18,24 +18,32 @@ import sys
 import pytest
 
 
-@pytest.fixture(autouse=True)
-def reset_shared_toolbox_factory():
+def _clear_shared_toolbox_factory():
     """
-    Clear ConnectivityDictionaryConverter's process-wide ToolboxFactory cache
-    after each test.
-
-    The cache captures AGENT_TOOLBOX_INFO_FILE at its first load and is never
-    refreshed, so without this reset a test that triggers a connectivity-style
-    progress report would leak its loaded factory (and the env-var state it was
-    built from) into every later test in the same process, producing
-    order-dependent results.
+    Clear ConnectivityDictionaryConverter's process-wide ToolboxFactory cache.
 
     The module is looked up via sys.modules instead of imported directly so
     tests that never touch the converter don't pay for importing neuro-san
     internals at collection time.
     """
-    yield
     module = sys.modules.get("coded_tools.agent_network_editor.connectivity_dictionary_converter")
     if module is not None:
         # pylint: disable=protected-access
         module.ConnectivityDictionaryConverter._shared_toolbox_factory = None
+
+
+@pytest.fixture(autouse=True)
+def reset_shared_toolbox_factory():
+    """
+    Clear the process-wide ToolboxFactory cache before and after each test.
+
+    The cache captures AGENT_TOOLBOX_INFO_FILE at its first load and is never
+    refreshed, so without this reset a test that triggers a connectivity-style
+    progress report would leak its loaded factory (and the env-var state it was
+    built from) into every later test in the same process, producing
+    order-dependent results. Clearing before the test as well guards against
+    state populated outside any test, e.g. during collection or session setup.
+    """
+    _clear_shared_toolbox_factory()
+    yield
+    _clear_shared_toolbox_factory()

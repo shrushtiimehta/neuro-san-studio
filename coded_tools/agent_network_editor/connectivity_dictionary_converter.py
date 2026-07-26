@@ -60,7 +60,9 @@ class ConnectivityDictionaryConverter(DictionaryConverter):
     # be shared across event loops.
     _shared_toolbox_factory_lock: Lock = Lock()
 
-    def __init__(self, include_keys: list[str] = None, toolbox_factory: ContextTypeToolboxFactory = None):
+    def __init__(
+        self, include_keys: list[str] | None = None, toolbox_factory: ContextTypeToolboxFactory | None = None
+    ):
         """
         Constructor
         :param include_keys: A list of keys to include in the conversion
@@ -73,7 +75,7 @@ class ConnectivityDictionaryConverter(DictionaryConverter):
         self.include_keys = include_keys
         if include_keys is None:
             self.include_keys = ["tools", "instructions", "description"]
-        self.toolbox_factory: ContextTypeToolboxFactory = toolbox_factory
+        self.toolbox_factory: ContextTypeToolboxFactory | None = toolbox_factory
 
     @classmethod
     def peek_shared_toolbox_factory(cls) -> ContextTypeToolboxFactory | None:
@@ -181,7 +183,7 @@ class ConnectivityDictionaryConverter(DictionaryConverter):
 
         # Fall back to the process-wide shared factory so every from_dict()
         # caller benefits from the cache without having to pass one in.
-        toolbox_factory: ContextTypeToolboxFactory = self.toolbox_factory
+        toolbox_factory: ContextTypeToolboxFactory | None = self.toolbox_factory
         if toolbox_factory is None:
             toolbox_factory = self.get_shared_toolbox_factory()
 
