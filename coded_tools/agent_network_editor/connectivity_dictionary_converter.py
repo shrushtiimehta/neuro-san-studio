@@ -58,7 +58,7 @@ class ConnectivityDictionaryConverter(DictionaryConverter):
     # A threading.Lock rather than an asyncio.Lock: callers may run on
     # different event loops in different threads, and an asyncio.Lock cannot
     # be shared across event loops.
-    _shared_toolbox_factory_lock: Lock = Lock()
+    _shared_toolbox_factory_lock = Lock()
 
     def __init__(
         self, include_keys: list[str] | None = None, toolbox_factory: ContextTypeToolboxFactory | None = None
