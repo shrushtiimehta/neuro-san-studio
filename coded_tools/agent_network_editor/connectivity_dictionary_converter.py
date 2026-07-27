@@ -201,7 +201,13 @@ class ConnectivityDictionaryConverter(DictionaryConverter):
                     break
 
             if found_entry is None:
-                continue
+                # Not reachable from the front man — or there is no front man at
+                # all, e.g. right after create_network when no agent has tools
+                # yet, in which case the reporter walk above yields an empty
+                # list. Emit the agent as an isolated node so clients can still
+                # render every defined agent.
+                found_entry = {"origin": name, "tools": internal_entry.get("tools", [])}
+                connectivity.append(found_entry)
 
             # Copy any keys that are not already in the connectivity report
             self.copy_keys_not_found(internal_entry, found_entry)
