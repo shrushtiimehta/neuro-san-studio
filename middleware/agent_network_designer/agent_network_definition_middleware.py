@@ -439,10 +439,9 @@ class AgentNetworkDefinitionMiddleware(AgentMiddleware):
 
         if self.progress_reporter is not None:
             # Pass the real sly_data (the same dict instance the coded tools receive) so this
-            # report shares the ToolboxFactory cache and the throttle bookkeeping with the tools.
-            # Previously None was passed here, which skipped the cache and made ConnectivityReporter
-            # re-read the toolbox info files on every single report — the expensive part the
-            # throttle was introduced to avoid in the first place.
+            # report shares the throttle bookkeeping with the tools and can look up the network
+            # name. (The ToolboxFactory used for connectivity conversion is no longer kept on
+            # sly_data — it is a process-wide cache on ConnectivityDictionaryConverter.)
             #
             # force=True keeps this report unthrottled: it fires at most once per model call of
             # the top-level designer (only the designer's middleware is configured with a
