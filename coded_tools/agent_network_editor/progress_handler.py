@@ -15,13 +15,12 @@
 # END COPYRIGHT
 
 import logging
+from asyncio import to_thread
 from os import environ
 from time import perf_counter
 from typing import Any
 
 from neuro_san.interfaces.agent_progress_reporter import AgentProgressReporter
-from neuro_san.internals.interfaces.context_type_toolbox_factory import ContextTypeToolboxFactory
-from neuro_san.internals.run_context.factory.master_toolbox_factory import MasterToolboxFactory
 
 from coded_tools.agent_network_editor.and_logger import AndLogger
 from coded_tools.agent_network_editor.connectivity_dictionary_converter import ConnectivityDictionaryConverter
@@ -29,8 +28,6 @@ from coded_tools.agent_network_editor.constants import AGENT_NETWORK_DEFINITION
 from coded_tools.agent_network_editor.constants import AGENT_NETWORK_NAME
 from coded_tools.agent_network_editor.constants import PROGRESS_HANDLER
 from coded_tools.agent_network_editor.constants import PROGRESS_HANDLER_LOCK
-from coded_tools.agent_network_editor.constants import TOOLBOX_FACTORY
-from coded_tools.agent_network_editor.constants import TOOLBOX_FACTORY_LOCK
 from coded_tools.agent_network_editor.sly_data_lock import SlyDataLock
 
 
@@ -117,9 +114,9 @@ class ProgressHandler:
                 Expected to contain a "progress_reporter" entry; without one
                 there is nothing to send through and the call is a no-op.
         :param sly_data: The sly_data dictionary on which the throttling state
-                (ProgressHandler) and the ToolboxFactory cache are kept.
+                (ProgressHandler) is kept.
                 Required — every caller has one, and reporting without it would
-                silently skip both the throttle and the cache.
+                silently skip the throttle.
         :param network_definition: The network definition dictionary
         :param name: The name of the agent network. If None, will not be reported in progress.
         :param force: When True, bypass the throttle and always send.
@@ -160,7 +157,7 @@ class ProgressHandler:
             attempt_stamp: float = progress_handler.last_progress
 
         try:
-            await ProgressHandler._send_report(progress_reporter, sly_data, network_definition, name)
+            await ProgressHandler._send_report(progress_reporter, network_definition, name)
         except Exception as exception:  # pylint: disable=broad-exception-caught
             # Best-effort telemetry: a failed send (toolbox file I/O, connectivity
             # conversion, journal write on a closed stream) must not fail the tool
@@ -239,9 +236,7 @@ class ProgressHandler:
             return
 
         try:
-            await ProgressHandler._send_report(
-                pending_reporter, sly_data, network_definition, sly_data.get(AGENT_NETWORK_NAME)
-            )
+            await ProgressHandler._send_report(pending_reporter, network_definition, sly_data.get(AGENT_NETWORK_NAME))
         except Exception as exception:  # pylint: disable=broad-exception-caught
             # Best-effort: this hook runs as a langgraph node, and an exception
             # escaping it would replace the run's real final answer with an error
@@ -253,7 +248,6 @@ class ProgressHandler:
     @staticmethod
     async def _send_report(
         progress_reporter: AgentProgressReporter,
-        sly_data: dict[str, Any],
         network_definition: dict[str, Any],
         name: str | None = None,
     ):
@@ -262,11 +256,9 @@ class ProgressHandler:
 
         This is the unthrottled sending path shared by report_progress() and
         flush_pending(). Throttling decisions and error containment are the
-        callers' responsibility; both callers guarantee a non-None reporter
-        and sly_data.
+        callers' responsibility; both callers guarantee a non-None reporter.
 
         :param progress_reporter: The AgentProgressReporter to send the progress through
-        :param sly_data: The sly_data dictionary used for the ToolboxFactory cache
         :param network_definition: The network definition dictionary
         :param name: The name of the agent network. If None, will not be reported in progress.
         """
@@ -280,21 +272,19 @@ class ProgressHandler:
             # that it already knows how to render.  Using the different key name allows the AGENT_PROGRESS
             # dictionary to look just like a ConnectivityResponse from the service.
 
-            # Get a cached toolbox factory so we don't have to read info from a file every time
-            toolbox_factory: ContextTypeToolboxFactory | None = sly_data.get(TOOLBOX_FACTORY)
-            if toolbox_factory is None:
-                async with await SlyDataLock.get_lock(sly_data, TOOLBOX_FACTORY_LOCK):
-                    toolbox_factory: ContextTypeToolboxFactory | None = sly_data.get(TOOLBOX_FACTORY)
-                    if toolbox_factory is None:
-                        # DEF - not sure if this empty dict is good enough
-                        empty: dict[str, Any] = {}
-                        toolbox_factory: ContextTypeToolboxFactory = MasterToolboxFactory.create_toolbox_factory(empty)
-                        toolbox_factory.load()
-                        sly_data[TOOLBOX_FACTORY] = toolbox_factory
+            # Warm the process-wide ToolboxFactory cache that from_dict() falls
+            # back to. Only the first call in the process pays for the file
+            # read + HOCON parse, and to_thread() keeps that parse off the
+            # event loop; once warm, the peek and the fallback inside
+            # from_dict() are lock-free attribute reads, so the steady-state
+            # path has no thread hop, no lock traffic, and no await between
+            # the throttle stamp and the conversion snapshot.
+            if ConnectivityDictionaryConverter.peek_shared_toolbox_factory() is None:
+                await to_thread(ConnectivityDictionaryConverter.get_shared_toolbox_factory)
 
             # Do the conversion
             use_key: str = "connectivity_info"
-            converter = ConnectivityDictionaryConverter(toolbox_factory=toolbox_factory)
+            converter = ConnectivityDictionaryConverter()
             use_network_definition = converter.from_dict(network_definition)
 
         elif agent_progress_style == "internal":
