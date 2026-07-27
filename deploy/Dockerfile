@@ -224,7 +224,7 @@ ENV AGENT_FORWARDED_REQUEST_METADATA="request_id user_id"
 ENV AGENT_HTTP_PORT="8080"
 
 # Maximum number of requests that can be served at the same time
-ENV AGENT_MAX_CONCURRENT_REQUESTS="50"
+ENV AGENT_MAX_CONCURRENT_REQUESTS="0"
 
 # Maximum number of worker threads per request.
 # Default of <= 0 (or unset) indicates system default of (num_cpus + 4).
