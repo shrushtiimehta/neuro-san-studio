@@ -28,8 +28,7 @@ def _clear_shared_toolbox_factory():
     """
     module = sys.modules.get("coded_tools.agent_network_editor.connectivity_dictionary_converter")
     if module is not None:
-        # pylint: disable=protected-access
-        module.ConnectivityDictionaryConverter._shared_toolbox_factory = None
+        module.ConnectivityDictionaryConverter.clear_shared_toolbox_factory_for_testing()
 
 
 @pytest.fixture(autouse=True)
