@@ -98,12 +98,15 @@ class ConnectivityDictionaryConverter(DictionaryConverter):
         reach this through asyncio.to_thread() on a miss. Once loaded, calls
         return via a lock-free attribute read.
 
-        Note: attribute access goes through the class by name (not cls) so a
+        Note: cache access goes through the class by name (not cls) so a
         hypothetical subclass shares the one cache instead of splitting it.
+        All reads funnel through peek_shared_toolbox_factory() so any future
+        cache policy (expiration, refresh) has a single interception point;
+        only the publish below touches the attribute directly.
 
         :return: The shared, already-load()-ed ToolboxFactory instance.
         """
-        factory: ContextTypeToolboxFactory | None = ConnectivityDictionaryConverter._shared_toolbox_factory
+        factory: ContextTypeToolboxFactory | None = ConnectivityDictionaryConverter.peek_shared_toolbox_factory()
         if factory is not None:
             # Lock-free fast path: the attribute is published only after a
             # successful load() and reference reads are atomic under the GIL,
@@ -111,7 +114,7 @@ class ConnectivityDictionaryConverter(DictionaryConverter):
             return factory
 
         with ConnectivityDictionaryConverter._shared_toolbox_factory_lock:
-            factory = ConnectivityDictionaryConverter._shared_toolbox_factory
+            factory = ConnectivityDictionaryConverter.peek_shared_toolbox_factory()
             if factory is None:
                 # The empty config dict is equivalent to the None that
                 # DesignerNetworkInspector.get_config() returns: the context
@@ -130,6 +133,23 @@ class ConnectivityDictionaryConverter(DictionaryConverter):
                 #   thread that can see this factory. Do not reorder.
                 ConnectivityDictionaryConverter._shared_toolbox_factory = factory
         return factory
+
+    @classmethod
+    def clear_shared_toolbox_factory_for_testing(cls):
+        """
+        Reset the process-wide ToolboxFactory cache. For test isolation only.
+
+        Production code must never call this: the cache is deliberately
+        load-once-per-process (see the class comment above). Tests call it
+        (via tests/conftest.py) so a factory loaded under one test's
+        AGENT_TOOLBOX_INFO_FILE state cannot leak into later tests. Living
+        here rather than in conftest keeps all the singleton policy in this
+        one class.
+        """
+        # Taking the lock serializes the reset with a concurrent first load,
+        # so this can never unpublish a factory mid-initialization.
+        with ConnectivityDictionaryConverter._shared_toolbox_factory_lock:
+            ConnectivityDictionaryConverter._shared_toolbox_factory = None
 
     def to_dict(self, obj: Connectivity) -> dict[str, Any]:
         """
