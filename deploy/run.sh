@@ -69,6 +69,7 @@ function run() {
         --name=$SERVICE_NAME \
         --network=$network \
         -e OPENAI_API_KEY \
+        -e OPENAI_API_BASE \
         -e ANTHROPIC_API_KEY \
         -e LANGFUSE_ENABLED \
         -e LANGFUSE_SECRET_KEY \
@@ -77,6 +78,9 @@ function run() {
         -e AGENT_RESERVATIONS_S3_BUCKET \
         -e AGENT_EXTERNAL_RESERVATIONS_STORAGE \
         -e AGENT_SESSION_REQUIRE_HTTPS=false \
+        -e AGENT_NETWORK_DESIGNER_USER_RESERVATIONS \
+        -e AWS_SECRET_ACCESS_KEY \
+        -e AWS_ACCESS_KEY_ID \
         -e LEAF_LOG_SENSITIVE=true \
         -e TOOL_REGISTRY_FILE=$1 \
         -p $SERVICE_HTTP_PORT:$SERVICE_HTTP_PORT \
