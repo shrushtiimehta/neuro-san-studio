@@ -75,7 +75,6 @@ function run() {
         -e LANGFUSE_SECRET_KEY \
         -e LANGFUSE_PUBLIC_KEY \
         -e LANGFUSE_HOST \
-        -e LANGFUSE_HOST \
         -e AGENT_RESERVATIONS_S3_BUCKET \
         -e AGENT_EXTERNAL_RESERVATIONS_STORAGE \
         -e AGENT_SESSION_REQUIRE_HTTPS=false \
