@@ -111,7 +111,8 @@ class ConnectivityDictionaryConverter(DictionaryConverter):
             return factory
 
         with ConnectivityDictionaryConverter._shared_toolbox_factory_lock:
-            if ConnectivityDictionaryConverter._shared_toolbox_factory is None:
+            factory = ConnectivityDictionaryConverter._shared_toolbox_factory
+            if factory is None:
                 # The empty config dict is equivalent to the None that
                 # DesignerNetworkInspector.get_config() returns: the context
                 # type defaults to "langchain" and any AGENT_TOOLBOX_INFO_FILE
@@ -128,7 +129,7 @@ class ConnectivityDictionaryConverter(DictionaryConverter):
                 #   unconditional per-report load() call a safe no-op on every
                 #   thread that can see this factory. Do not reorder.
                 ConnectivityDictionaryConverter._shared_toolbox_factory = factory
-        return ConnectivityDictionaryConverter._shared_toolbox_factory
+        return factory
 
     def to_dict(self, obj: Connectivity) -> dict[str, Any]:
         """
