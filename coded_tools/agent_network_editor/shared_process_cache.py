@@ -137,19 +137,21 @@ class SharedProcessCache(Generic[T]):
             return value
 
         with self._lock:
-            # Double-check under the lock: another thread may have loaded
-            # while this one waited.
-            value = self.peek()
-            if value is not None:
-                return value
+            # Probe the fingerprint once per miss: it serves both as the
+            # double-check against a load that finished while this thread
+            # waited for the lock, and as the freshness capture stored with
+            # the value below — so a stat-style probe runs once, not twice.
+            current_fingerprint: Any = self._fingerprint() if self._fingerprint is not None else None
+            entry: tuple[T, Any] | None = self._entry
+            if entry is not None and (self._fingerprint is None or entry[1] == current_fingerprint):
+                return entry[0]
 
-            # Capture the fingerprint BEFORE loading: if the source changes
-            # while the loader runs, the next read's probe mismatches and the
-            # value is rebuilt, rather than a torn read living forever.
-            loaded_fingerprint: Any = self._fingerprint() if self._fingerprint is not None else None
+            # The fingerprint was captured BEFORE loading: if the source
+            # changes while the loader runs, the next read's probe mismatches
+            # and the value is rebuilt, rather than a torn read living forever.
             value = self._loader()
             # Publish only after the loader fully succeeded. Do not reorder.
-            self._entry = (value, loaded_fingerprint)
+            self._entry = (value, current_fingerprint)
 
         return value
 

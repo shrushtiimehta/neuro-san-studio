@@ -57,7 +57,13 @@ class AgentNetworkStructureValidationMiddleware(AgentNetworkValidationMiddleware
 
         # Get infos from the agent network editor's tools. Subnetwork names
         # and toolbox info come from their process-wide caches; MCP servers
-        # are still cached in sly_data by their tool.
+        # are still cached in sly_data by their tool. Validating against the
+        # shared subnetwork cache (rather than the per-session snapshot used
+        # before the process-wide cache) cannot contradict the list the LLM
+        # was shown, because the manifest does not change mid-conversation:
+        # server deployments never write it at runtime — generated networks
+        # are only saved into the local manifest on local runs, where the
+        # fingerprint TTL bounds any staleness from the designer's own saves.
         subnetwork_names: list[str] = await GetSubnetwork.get_subnetwork_names()
         mcp_servers: list[str] = await GetMcpTool.get_mcp_servers(self.sly_data)
         toolbox_tools: dict[str, Any] = await GetToolbox.get_toolbox_info()

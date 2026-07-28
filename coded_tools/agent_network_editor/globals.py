@@ -37,7 +37,7 @@ import sys
 #    Holds:   a load()-ed neuro-san ContextTypeToolboxFactory used to render
 #             connectivity-style views of agent network definitions.
 #    Lives:   connectivity_dictionary_converter.ConnectivityDictionaryConverter
-#             (peek_/get_/aget_shared_toolbox_factory)
+#             (get_/aget_shared_toolbox_factory)
 #    Expiry:  none — loaded once; restart to pick up an edited
 #             AGENT_TOOLBOX_INFO_FILE.
 #    Used by: ConnectivityDictionaryConverter.from_dict() (fallback when no
@@ -50,8 +50,7 @@ import sys
 # 2. Shared toolbox info (issue #1268)
 #    Holds:   the {tool_name: description} mapping parsed from the designer's
 #             toolbox info file (AGENT_NETWORK_DESIGNER_TOOLBOX_INFO_FILE).
-#    Lives:   get_toolbox.GetToolbox (peek_/get_shared_toolbox_info,
-#             async get_toolbox_info)
+#    Lives:   get_toolbox.GetToolbox (async get_toolbox_info)
 #    Expiry:  none — loaded once (a missing file is retried, never cached);
 #             restart to pick up edits.
 #    Used by: GetToolbox.async_invoke() (the coded tool the editor LLM calls);
@@ -61,13 +60,13 @@ import sys
 # 3. Shared subnetwork names (issue #1267)
 #    Holds:   the "/<network_name>" list parsed from the designer manifest
 #             (AGENT_NETWORK_DESIGNER_MANIFEST_FILE).
-#    Lives:   get_subnetwork.GetSubnetwork (peek_shared_subnetwork_names,
-#             async get_subnetwork_names)
+#    Lives:   get_subnetwork.GetSubnetwork (async get_subnetwork_names)
 #    Expiry:  manifest path/mtime change, or at most
 #             get_subnetwork.SUBNETWORK_NAMES_TTL_SECONDS (the manifest
 #             `include`s other manifests a cheap probe cannot see, notably
 #             registries/generated/manifest.hocon which grows as the designer
-#             saves networks).
+#             saves networks on local runs; server deployments never write
+#             the manifest at runtime).
 #    Used by: GetSubnetwork.get_subnetworks() (the coded tool path);
 #             agent_network_structure_validation_middleware
 #             .AgentNetworkStructureValidationMiddleware.validate();

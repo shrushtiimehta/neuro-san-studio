@@ -23,10 +23,10 @@ from typing import Any
 from leaf_common.config.config_filter_chain import ConfigFilterChain
 from neuro_san.interfaces.coded_tool import CodedTool
 from neuro_san.internals.graph.activations.branch_activation import BranchActivation
-from neuro_san.internals.graph.persistence.agent_filetree_mapper import AgentFileTreeMapper
 from neuro_san.internals.graph.persistence.manifest_dict_config_filter import ManifestDictConfigFilter
 from neuro_san.internals.graph.persistence.manifest_key_config_filter import ManifestKeyConfigFilter
 from neuro_san.internals.graph.persistence.raw_manifest_restorer import RawManifestRestorer
+from neuro_san.internals.graph.persistence.registry_manifest_restorer import RegistryManifestRestorer
 from neuro_san.internals.graph.persistence.served_manifest_config_filter import ServedManifestConfigFilter
 from pyparsing.exceptions import ParseException
 
@@ -40,7 +40,10 @@ DEFAULT_MANIFEST_FILE = os.path.join("registries", "manifest_and.hocon")
 # Upper bound on how stale the shared subnetwork-names list can get from
 # changes a cheap probe cannot see (see _manifest_fingerprint below). One
 # manifest parse per window (~15-20ms, off the event loop) is the whole
-# steady-state refresh cost.
+# steady-state refresh cost. Deployment assumption: server deployments never
+# write the manifest at runtime — generated networks are only saved into the
+# local manifest on local runs — so this TTL exists to keep local runs fresh
+# after a save and otherwise acts as a safety net.
 SUBNETWORK_NAMES_TTL_SECONDS: float = 10.0
 
 logger = AndLogger(logging.getLogger(__name__))
@@ -73,7 +76,8 @@ def _manifest_fingerprint() -> tuple[str, int | None, int]:
     * a time bucket that rolls every SUBNETWORK_NAMES_TTL_SECONDS — the
       manifest composes other manifests via `include` (notably
       registries/generated/manifest.hocon, which grows every time the
-      designer saves a network), and a cheap probe cannot see those included
+      designer saves a network on a local run; server deployments never
+      write the manifest), and a cheap probe cannot see those included
       files, so the TTL bounds that staleness instead.
 
     :return: (path, mtime_ns or None, time bucket) tuple.
@@ -136,13 +140,12 @@ def _load_subnetwork_names() -> list[str]:
         filter_chain.register(ServedManifestConfigFilter(manifest_file, warn_on_skip=False, entry_for_skipped=False))
         one_manifest: dict[str, Any] = filter_chain.filter_config(raw_manifest)
 
-        # Derive external network names ("/<network_name>") via the canonical mapper used by
-        # neuro-san (matches RegistryManifestRestorer.find_external_network_names).
-        agent_mapper = AgentFileTreeMapper()
-        for manifest_key in one_manifest.keys():
-            agent_filepath: str = agent_mapper.agent_name_to_filepath(manifest_key)
-            network_name: str = agent_mapper.filepath_to_agent_network_name(agent_filepath)
-            names.append(f"/{network_name}")
+        # Derive external network names ("/<network_name>") via neuro-san's
+        # canonical implementation instead of re-rolling its mapper walk.
+        # Passing manifest_files explicitly keeps the constructor away from
+        # the server-wide AGENT_MANIFEST_FILE fallback; construction is cheap
+        # (it just stores the path and a default AgentFileTreeMapper).
+        names = RegistryManifestRestorer(manifest_files=manifest_file).find_external_network_names(one_manifest)
     except (ParseException, ValueError) as parse_error:
         # neuro-san's restorer deliberately re-wraps HOCON parse errors
         # (pyparsing ParseException, pyhocon ConfigException) as ValueError,
@@ -178,9 +181,10 @@ class GetSubnetwork(BranchActivation, CodedTool):
     # designer manifest (issue #1267). Previously cached per sly_data scope,
     # so a server handling N concurrent conversations re-parsed the same
     # manifest N times, on the event loop. Unlike the immortal toolbox
-    # caches, this source legitimately changes at runtime — the designer
-    # saves every generated network into a manifest the top file `include`s —
-    # so the fingerprint (path + mtime + TTL bucket, see
+    # caches, this source legitimately changes at runtime on local runs —
+    # the designer saves every generated network into a manifest the top
+    # file `include`s; server deployments persist elsewhere and never write
+    # it — so the fingerprint (path + mtime + TTL bucket, see
     # _manifest_fingerprint) keeps the list at most SUBNETWORK_NAMES_TTL_SECONDS
     # stale. Locking, publish ordering, and the async once-gate live in
     # SharedProcessCache; access goes through the class by name (not cls) so
@@ -188,17 +192,6 @@ class GetSubnetwork(BranchActivation, CodedTool):
     _shared_subnetwork_names_cache: SharedProcessCache[list[str]] = SharedProcessCache(
         loader=_load_subnetwork_names, fingerprint=_manifest_fingerprint
     )
-
-    @classmethod
-    def peek_shared_subnetwork_names(cls) -> list[str] | None:
-        """
-        :return: The shared subnetwork-names list if it has been loaded and is
-                still fresh, else None. Lock-free and safe to call from any
-                thread or event loop. Treat the result as read-only: it is
-                the live shared cache, not a copy — get_subnetwork_names()
-                returns a mutation-safe copy.
-        """
-        return GetSubnetwork._shared_subnetwork_names_cache.peek()
 
     @classmethod
     def clear_shared_subnetwork_names_for_testing(cls):

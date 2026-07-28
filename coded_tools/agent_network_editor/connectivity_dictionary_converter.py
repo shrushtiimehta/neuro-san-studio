@@ -103,14 +103,6 @@ class ConnectivityDictionaryConverter(DictionaryConverter):
         self.toolbox_factory: ContextTypeToolboxFactory | None = toolbox_factory
 
     @classmethod
-    def peek_shared_toolbox_factory(cls) -> ContextTypeToolboxFactory | None:
-        """
-        :return: The shared ToolboxFactory if it has already been loaded, else None.
-                Lock-free and safe to call from any thread or event loop.
-        """
-        return ConnectivityDictionaryConverter._shared_toolbox_factory_cache.peek()
-
-    @classmethod
     def get_shared_toolbox_factory(cls) -> ContextTypeToolboxFactory:
         """
         Get the process-wide ToolboxFactory, creating and load()-ing it on first call.

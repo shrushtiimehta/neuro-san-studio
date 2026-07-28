@@ -93,40 +93,6 @@ class GetToolbox(CodedTool):
     )
 
     @classmethod
-    def peek_shared_toolbox_info(cls) -> dict[str, str] | None:
-        """
-        :return: The shared toolbox info if it has already been loaded, else
-                None. Lock-free and safe to call from any thread or event
-                loop. Treat the result as read-only: it is the live shared
-                cache, not a copy — mutating it corrupts every conversation
-                in the process. get_toolbox_info() returns a mutation-safe
-                copy.
-        """
-        return GetToolbox._shared_toolbox_info_cache.peek()
-
-    @classmethod
-    def get_shared_toolbox_info(cls) -> dict[str, str]:
-        """
-        Get the process-wide toolbox info, reading and parsing the file on
-        first call.
-
-        The first call in the process does file I/O plus a HOCON parse, so
-        this must not be called on an event loop — async callers use
-        get_toolbox_info(), which keeps the cold load in a worker thread.
-
-        :return: dict mapping tool names to descriptions; empty if the
-                toolbox info file does not exist (retried on the next call,
-                never cached — see the loader). A malformed file raises.
-                Treat the result as read-only: it is the live shared cache,
-                not a copy — get_toolbox_info() returns a mutation-safe copy.
-        """
-        try:
-            return GetToolbox._shared_toolbox_info_cache.get()
-        except FileNotFoundError:
-            # Already logged by the loader with the resolved path.
-            return {}
-
-    @classmethod
     def clear_shared_toolbox_info_for_testing(cls):
         """
         Reset the process-wide toolbox info cache. For test isolation only.
