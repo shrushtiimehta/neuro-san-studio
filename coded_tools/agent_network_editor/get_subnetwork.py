@@ -143,7 +143,11 @@ def _load_subnetwork_names() -> list[str]:
             agent_filepath: str = agent_mapper.agent_name_to_filepath(manifest_key)
             network_name: str = agent_mapper.filepath_to_agent_network_name(agent_filepath)
             names.append(f"/{network_name}")
-    except ParseException as parse_error:
+    except (ParseException, ValueError) as parse_error:
+        # neuro-san's restorer deliberately re-wraps HOCON parse errors
+        # (pyparsing ParseException, pyhocon ConfigException) as ValueError,
+        # so ValueError is what actually arrives here; ParseException stays
+        # in the tuple in case that wrapping ever goes away.
         logger.warning(
             "Failed to parse manifest '%s', no subnetwork names will be available: %s",
             manifest_file,

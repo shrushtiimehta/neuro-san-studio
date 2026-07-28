@@ -27,6 +27,7 @@ while the subtle *mechanism* lives here once.
 
 from asyncio import Task
 from asyncio import get_running_loop
+from asyncio import shield
 from asyncio import to_thread
 from threading import Lock
 from typing import Any
@@ -70,7 +71,9 @@ class SharedProcessCache(Generic[T]):
     * aget() keeps the cold load off the event loop via asyncio.to_thread()
       and funnels concurrent cold callers on the same loop into ONE load: the
       first caller creates the load task and the rest await it, so a cold
-      burst cannot fill the loop's default executor with lock-waiters.
+      burst cannot fill the loop's default executor with lock-waiters. The
+      await is shield()-ed, so one cancelled caller cannot cancel the shared
+      load out from under the others.
     """
 
     def __init__(self, loader: Callable[[], T], fingerprint: Callable[[], Any] | None = None):
@@ -89,10 +92,12 @@ class SharedProcessCache(Generic[T]):
         self._entry: tuple[T, Any] | None = None
         self._lock = Lock()
         # Per-event-loop in-flight load task, so concurrent async callers on
-        # one loop share a single to_thread() dispatch. Weak keys let a
-        # closed loop's entry disappear on its own. Access races between
-        # loops are benign: at worst two loops each run a load, and the lock
-        # in get() still serializes the actual work.
+        # one loop share a single to_thread() dispatch. Entries are removed
+        # by each task's done callback (_forget_in_flight_load) — the weak
+        # keying alone cannot reclaim them, because a Task strongly
+        # references the loop it runs on, i.e. its own key. Access races
+        # between loops are benign: at worst two loops each run a load, and
+        # the lock in get() still serializes the actual work.
         self._loads_in_flight: WeakKeyDictionary = WeakKeyDictionary()
 
     def peek(self) -> T | None:
@@ -169,19 +174,55 @@ class SharedProcessCache(Generic[T]):
             # stale); start a new one. Awaiters of the old task are unaffected.
             task = loop.create_task(to_thread(self.get))
             self._loads_in_flight[loop] = task
-        # Awaiting a shared task is safe under cancellation: cancelling one
-        # awaiter does not cancel the task, so the load still completes for
-        # the others.
-        return await task
+            task.add_done_callback(self._forget_in_flight_load)
+        # shield() detaches awaiter cancellation from the shared task: a
+        # cancelled awaiter still gets its CancelledError, but the load keeps
+        # running and completes for the other awaiters. An unshielded await
+        # here would let one cancelled caller cancel everyone else's load,
+        # because Task.cancel() propagates into whatever the task is awaiting.
+        return await shield(task)
+
+    def _forget_in_flight_load(self, task: Task):
+        """
+        Done-callback for once-gate load tasks (see aget()).
+
+        Dropping the finished task promptly matters beyond tidiness: a Task
+        strongly references the event loop it runs on — its own dictionary
+        key — so entries would otherwise never be garbage-collected despite
+        the weak keying, leaking one loop + task per event loop under
+        loop-per-test runners. Retrieving the exception keeps a failed load
+        whose awaiters were all cancelled from logging "Task exception was
+        never retrieved".
+        """
+        loop = task.get_loop()
+        # Only forget the task this callback belongs to: clear_for_testing()
+        # may have dropped it already. pop() instead of del so a concurrent
+        # clear between the check and the removal stays a no-op; a *newer*
+        # task cannot sneak into the slot in that window, because only this
+        # loop's thread installs tasks for this key.
+        if self._loads_in_flight.get(loop) is task:
+            self._loads_in_flight.pop(loop, None)
+        if not task.cancelled():
+            # Mark a failed load's exception as retrieved (returns None on
+            # success). Awaiters that were still around received it via the
+            # shield()-ed await.
+            task.exception()
 
     def clear_for_testing(self):
         """
-        Drop the cached value. For test isolation only — production code
-        relies on load-once semantics. Not safe against a concurrently
-        in-flight load publishing just after the clear; tests run loads
-        sequentially, where this cannot happen.
+        Drop the cached value and forget any in-flight once-gate loads. For
+        test isolation only — production code relies on load-once semantics.
+
+        Forgetting the in-flight tasks matters: without it, an aget() issued
+        after the clear could adopt a still-pending pre-clear load and
+        receive a value built under the previous test's env/file state. The
+        lock serializes this reset with a load that is mid-publish; a
+        pre-clear load that was dispatched but never awaited can still
+        publish after the reset, which tests avoid by running loads
+        sequentially.
         """
         # Taking the lock serializes the reset with a concurrent load, so
         # this can never unpublish an entry mid-initialization.
         with self._lock:
             self._entry = None
+            self._loads_in_flight.clear()
