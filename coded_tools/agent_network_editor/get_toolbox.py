@@ -57,7 +57,10 @@ class GetToolbox(CodedTool):
                 Lock-free and safe to call from any thread or event loop. Async
                 callers can use a None result to decide to run
                 get_shared_toolbox_info() in a worker thread instead of on the
-                event loop.
+                event loop. Treat the result as read-only: it is the live
+                shared cache, not a copy — mutating it corrupts every
+                conversation in the process. get_toolbox_info() returns a
+                mutation-safe copy.
         """
         return GetToolbox._shared_toolbox_info
 
@@ -78,10 +81,14 @@ class GetToolbox(CodedTool):
         only the publishes below touch the attribute directly.
 
         :return: dict mapping tool names to descriptions; empty if the toolbox
-                info file does not exist. A missing file is cached as empty —
-                preserving the previous per-session "go fish, but only once"
-                behavior at process scope — while any other load error leaves
-                the cache unpublished so the next call retries.
+                info file does not exist. Failures are never published: a
+                missing file returns empty for this call only and the next
+                call retries, so a transient gap (a deploy replacing the file,
+                a not-yet-mounted volume) cannot pin an empty toolbox for the
+                life of the process. A malformed file raises out of the parse,
+                also unpublished. Treat the result as read-only: it is the
+                live shared cache, not a copy — get_toolbox_info() returns a
+                mutation-safe copy.
         """
         tools: dict[str, str] | None = GetToolbox.peek_shared_toolbox_info()
         if tools is not None:
@@ -101,26 +108,33 @@ class GetToolbox(CodedTool):
                 # Use a default if no value specified
                 toolbox_info_file = DEFAULT_TOOLBOX_INFO_FILE
 
-            # Go fish, but only once per process.
+            # Go fish — once per process once it succeeds.
             logger.info(">>>>>>>>>>>>>>>>>>>Getting Tool Definition from Toolbox>>>>>>>>>>>>>>>>>>>")
             logger.info("Toolbox info file: %s", toolbox_info_file)
 
-            tools = {}
             try:
                 raw_tools: dict[str, Any] = ToolboxInfoRestorer().restore(toolbox_info_file)
-                logger.info("Successfully loaded the following toolbox: %s", str(raw_tools))
-
-                # Keep only each tool's description.
-                for tool_name, tool_info in raw_tools.items():
-                    tools[tool_name] = tool_info.get("description", "")
-
             except FileNotFoundError:
+                # Return empty WITHOUT publishing: caching the failure would
+                # serve an empty toolbox to every conversation until process
+                # restart, even after an operator restores the file (deploy
+                # races and wrong-CWD launches make a missing file a transient
+                # condition). The retry costs one failed open per call, and
+                # the recurring warning is the operator's signal.
                 logger.warning("Error: Failed to load toolbox info from %s.", toolbox_info_file)
+                return {}
 
-            # Publish only after the load-and-clean fully succeeded (or the
-            # file was definitively absent). Parse errors propagate out of the
-            # restore above without publishing, so a transiently broken file
-            # is retried on the next call instead of poisoning the cache.
+            logger.info("Successfully loaded the following toolbox: %s", str(raw_tools))
+
+            # Keep only each tool's description.
+            tools = {}
+            for tool_name, tool_info in raw_tools.items():
+                tools[tool_name] = tool_info.get("description", "")
+
+            # Publish only after the load-and-clean fully succeeded. Parse
+            # errors propagate out of the restore above without publishing,
+            # so a transiently broken file is retried on the next call
+            # instead of poisoning the cache.
             GetToolbox._shared_toolbox_info = tools
 
         return tools
@@ -148,14 +162,16 @@ class GetToolbox(CodedTool):
         Read toolbox info from the process-wide cache, loading it from a file
         on the first call in the process.
 
-        :return: dict mapping tool names to descriptions; empty if loading fails.
-                The returned dict is a copy, so callers may mutate it without
-                corrupting the shared cache.
+        :return: dict mapping tool names to descriptions; empty if the toolbox
+                info file does not exist (retried on the next call, never
+                cached). A malformed file raises. The returned dict is a copy,
+                so callers may mutate it without corrupting the shared cache.
         """
         tools: dict[str, str] | None = GetToolbox.peek_shared_toolbox_info()
         if tools is None:
-            # Cold path, at most once per process: keep the file read and
-            # HOCON parse off the event loop.
+            # Cold path — once per process on success, once per call while
+            # the file is missing: keep the file read and HOCON parse off
+            # the event loop.
             tools = await to_thread(GetToolbox.get_shared_toolbox_info)
         return dict(tools)
 
@@ -185,6 +201,7 @@ class GetToolbox(CodedTool):
             In case of successful execution:
                 the tool definition from toolbox as a dictionary.
             otherwise:
-                an empty dictionary.
+                an empty dictionary if the toolbox info file does not exist;
+                a malformed file raises.
         """
         return await self.get_toolbox_info()
