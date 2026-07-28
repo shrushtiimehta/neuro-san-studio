@@ -16,17 +16,61 @@
 
 import logging
 import os
-from asyncio import to_thread
-from threading import Lock
 from typing import Any
 
 from neuro_san.interfaces.coded_tool import CodedTool
 from neuro_san.internals.run_context.langchain.toolbox.toolbox_info_restorer import ToolboxInfoRestorer
 
 from coded_tools.agent_network_editor.and_logger import AndLogger
+from coded_tools.agent_network_editor.shared_process_cache import SharedProcessCache
 
 DEFAULT_TOOLBOX_INFO_FILE = os.path.join("neuro_san_studio", "toolbox", "agent_network_designer_toolbox_info.hocon")
 logger = AndLogger(logging.getLogger(__name__))
+
+
+def _load_shared_toolbox_info() -> dict[str, str]:
+    """
+    Loader for the shared toolbox info (runs inside SharedProcessCache).
+
+    Resolves the toolbox info file — the AGENT_NETWORK_DESIGNER_TOOLBOX_INFO_FILE
+    env var or the default — reads and parses it, and reduces each entry to its
+    description.
+
+    :return: dict mapping tool names to descriptions.
+    :raise FileNotFoundError: When the file does not exist (after logging a
+            warning with the resolved path). The cache publishes nothing on a
+            raise, so a transient gap — a deploy replacing the file, a
+            wrong-CWD launch — cannot pin an empty toolbox for the life of
+            the process: the next call retries and heals the moment the file
+            appears. A malformed file raises out of the parse, likewise
+            unpublished.
+    """
+    # Check for toolbox info file in env var
+    toolbox_info_file: str = os.getenv("AGENT_NETWORK_DESIGNER_TOOLBOX_INFO_FILE")
+    if not toolbox_info_file:
+        # Use a default if no value specified
+        toolbox_info_file = DEFAULT_TOOLBOX_INFO_FILE
+
+    # Go fish — once per process once it succeeds.
+    logger.info(">>>>>>>>>>>>>>>>>>>Getting Tool Definition from Toolbox>>>>>>>>>>>>>>>>>>>")
+    logger.info("Toolbox info file: %s", toolbox_info_file)
+
+    try:
+        raw_tools: dict[str, Any] = ToolboxInfoRestorer().restore(toolbox_info_file)
+    except FileNotFoundError:
+        # The warning lives here because only the loader knows the resolved
+        # path; the callers' policy (return empty for this call) lives with
+        # them. The recurring warning is the operator's signal.
+        logger.warning("Error: Failed to load toolbox info from %s.", toolbox_info_file)
+        raise
+
+    logger.info("Successfully loaded the following toolbox: %s", str(raw_tools))
+
+    # Keep only each tool's description.
+    tools: dict[str, str] = {}
+    for tool_name, tool_info in raw_tools.items():
+        tools[tool_name] = tool_info.get("description", "")
+    return tools
 
 
 class GetToolbox(CodedTool):
@@ -34,110 +78,53 @@ class GetToolbox(CodedTool):
     CodedTool implementation which provides a way to get tool definition from toolbox info file
     """
 
-    # Process-wide cache of the {tool_name: description} mapping parsed from the
-    # toolbox info file (issue #1268). The file path — the
-    # AGENT_NETWORK_DESIGNER_TOOLBOX_INFO_FILE env var or the default — is
-    # resolved at first use and the parse happens once per process; the cache is
-    # deliberately never refreshed, so picking up an edited toolbox info file
-    # requires a process restart. This is the same trade-off already made for
+    # Process-wide cache of the {tool_name: description} mapping parsed from
+    # the toolbox info file (issue #1268). With no fingerprint the mapping is
+    # deliberately never refreshed once loaded, so picking up an edited
+    # toolbox info file requires a process restart — the same trade-off as
     # ConnectivityDictionaryConverter's shared ToolboxFactory. Previously the
     # cache lived in sly_data, so a server handling N concurrent conversations
-    # re-parsed the same HOCON N times, on the event loop.
-    _shared_toolbox_info: dict[str, str] | None = None
-
-    # A threading.Lock rather than an asyncio.Lock: callers may run on
-    # different event loops in different threads, and an asyncio.Lock cannot
-    # be shared across event loops.
-    _shared_toolbox_info_lock = Lock()
+    # re-parsed the same HOCON N times, on the event loop. Locking, publish
+    # ordering, and the async once-gate live in SharedProcessCache; access
+    # goes through the class by name (not cls) so a hypothetical subclass
+    # shares the one cache instead of splitting it.
+    _shared_toolbox_info_cache: SharedProcessCache[dict[str, str]] = SharedProcessCache(
+        loader=_load_shared_toolbox_info
+    )
 
     @classmethod
     def peek_shared_toolbox_info(cls) -> dict[str, str] | None:
         """
-        :return: The shared toolbox info if it has already been loaded, else None.
-                Lock-free and safe to call from any thread or event loop. Async
-                callers can use a None result to decide to run
-                get_shared_toolbox_info() in a worker thread instead of on the
-                event loop. Treat the result as read-only: it is the live
-                shared cache, not a copy — mutating it corrupts every
-                conversation in the process. get_toolbox_info() returns a
-                mutation-safe copy.
+        :return: The shared toolbox info if it has already been loaded, else
+                None. Lock-free and safe to call from any thread or event
+                loop. Treat the result as read-only: it is the live shared
+                cache, not a copy — mutating it corrupts every conversation
+                in the process. get_toolbox_info() returns a mutation-safe
+                copy.
         """
-        return GetToolbox._shared_toolbox_info
+        return GetToolbox._shared_toolbox_info_cache.peek()
 
     @classmethod
     def get_shared_toolbox_info(cls) -> dict[str, str]:
         """
-        Get the process-wide toolbox info, reading and parsing the file on first call.
+        Get the process-wide toolbox info, reading and parsing the file on
+        first call.
 
         The first call in the process does file I/O plus a HOCON parse, so
-        async callers should check peek_shared_toolbox_info() first and reach
-        this through asyncio.to_thread() on a miss. Once loaded, calls return
-        via a lock-free read.
+        this must not be called on an event loop — async callers use
+        get_toolbox_info(), which keeps the cold load in a worker thread.
 
-        Note: cache access goes through the class by name (not cls) so a
-        hypothetical subclass shares the one cache instead of splitting it.
-        All reads funnel through peek_shared_toolbox_info() so any future
-        cache policy (expiration, refresh) has a single interception point;
-        only the publishes below touch the attribute directly.
-
-        :return: dict mapping tool names to descriptions; empty if the toolbox
-                info file does not exist. Failures are never published: a
-                missing file returns empty for this call only and the next
-                call retries, so a transient gap (a deploy replacing the file,
-                a not-yet-mounted volume) cannot pin an empty toolbox for the
-                life of the process. A malformed file raises out of the parse,
-                also unpublished. Treat the result as read-only: it is the
-                live shared cache, not a copy — get_toolbox_info() returns a
-                mutation-safe copy.
+        :return: dict mapping tool names to descriptions; empty if the
+                toolbox info file does not exist (retried on the next call,
+                never cached — see the loader). A malformed file raises.
+                Treat the result as read-only: it is the live shared cache,
+                not a copy — get_toolbox_info() returns a mutation-safe copy.
         """
-        tools: dict[str, str] | None = GetToolbox.peek_shared_toolbox_info()
-        if tools is not None:
-            # Lock-free fast path: the attribute is published only after a
-            # fully successful load-and-clean, and reference reads are atomic
-            # under the GIL, so a non-None read always yields a complete dict.
-            return tools
-
-        with GetToolbox._shared_toolbox_info_lock:
-            tools = GetToolbox.peek_shared_toolbox_info()
-            if tools is not None:
-                return tools
-
-            # Check for toolbox info file in env var
-            toolbox_info_file: str = os.getenv("AGENT_NETWORK_DESIGNER_TOOLBOX_INFO_FILE")
-            if not toolbox_info_file:
-                # Use a default if no value specified
-                toolbox_info_file = DEFAULT_TOOLBOX_INFO_FILE
-
-            # Go fish — once per process once it succeeds.
-            logger.info(">>>>>>>>>>>>>>>>>>>Getting Tool Definition from Toolbox>>>>>>>>>>>>>>>>>>>")
-            logger.info("Toolbox info file: %s", toolbox_info_file)
-
-            try:
-                raw_tools: dict[str, Any] = ToolboxInfoRestorer().restore(toolbox_info_file)
-            except FileNotFoundError:
-                # Return empty WITHOUT publishing: caching the failure would
-                # serve an empty toolbox to every conversation until process
-                # restart, even after an operator restores the file (deploy
-                # races and wrong-CWD launches make a missing file a transient
-                # condition). The retry costs one failed open per call, and
-                # the recurring warning is the operator's signal.
-                logger.warning("Error: Failed to load toolbox info from %s.", toolbox_info_file)
-                return {}
-
-            logger.info("Successfully loaded the following toolbox: %s", str(raw_tools))
-
-            # Keep only each tool's description.
-            tools = {}
-            for tool_name, tool_info in raw_tools.items():
-                tools[tool_name] = tool_info.get("description", "")
-
-            # Publish only after the load-and-clean fully succeeded. Parse
-            # errors propagate out of the restore above without publishing,
-            # so a transiently broken file is retried on the next call
-            # instead of poisoning the cache.
-            GetToolbox._shared_toolbox_info = tools
-
-        return tools
+        try:
+            return GetToolbox._shared_toolbox_info_cache.get()
+        except FileNotFoundError:
+            # Already logged by the loader with the resolved path.
+            return {}
 
     @classmethod
     def clear_shared_toolbox_info_for_testing(cls):
@@ -151,28 +138,25 @@ class GetToolbox(CodedTool):
         tests. Living here rather than in conftest keeps all the singleton
         policy in this one class.
         """
-        # Taking the lock serializes the reset with a concurrent first load,
-        # so this can never unpublish a mapping mid-initialization.
-        with GetToolbox._shared_toolbox_info_lock:
-            GetToolbox._shared_toolbox_info = None
+        GetToolbox._shared_toolbox_info_cache.clear_for_testing()
 
     @staticmethod
     async def get_toolbox_info() -> dict[str, str]:
         """
         Read toolbox info from the process-wide cache, loading it from a file
-        on the first call in the process.
+        on the first call in the process. The cold load runs off the event
+        loop and is shared by concurrent cold callers.
 
         :return: dict mapping tool names to descriptions; empty if the toolbox
                 info file does not exist (retried on the next call, never
                 cached). A malformed file raises. The returned dict is a copy,
                 so callers may mutate it without corrupting the shared cache.
         """
-        tools: dict[str, str] | None = GetToolbox.peek_shared_toolbox_info()
-        if tools is None:
-            # Cold path — once per process on success, once per call while
-            # the file is missing: keep the file read and HOCON parse off
-            # the event loop.
-            tools = await to_thread(GetToolbox.get_shared_toolbox_info)
+        try:
+            tools: dict[str, str] = await GetToolbox._shared_toolbox_info_cache.aget()
+        except FileNotFoundError:
+            # Already logged by the loader with the resolved path.
+            return {}
         return dict(tools)
 
     async def async_invoke(self, args: dict[str, Any], sly_data: dict[str, Any]) -> dict[str, Any]:

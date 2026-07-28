@@ -15,7 +15,6 @@
 # END COPYRIGHT
 
 import logging
-from asyncio import to_thread
 from os import environ
 from time import perf_counter
 from typing import Any
@@ -272,15 +271,13 @@ class ProgressHandler:
             # that it already knows how to render.  Using the different key name allows the AGENT_PROGRESS
             # dictionary to look just like a ConnectivityResponse from the service.
 
-            # Warm the process-wide ToolboxFactory cache that from_dict() falls
-            # back to. Only the first call in the process pays for the file
-            # read + HOCON parse, and to_thread() keeps that parse off the
-            # event loop; once warm, the peek and the fallback inside
-            # from_dict() are lock-free attribute reads, so the steady-state
-            # path has no thread hop, no lock traffic, and no await between
-            # the throttle stamp and the conversion snapshot.
-            if ConnectivityDictionaryConverter.peek_shared_toolbox_factory() is None:
-                await to_thread(ConnectivityDictionaryConverter.get_shared_toolbox_factory)
+            # Warm the process-wide ToolboxFactory cache that from_dict()
+            # falls back to. Only the first call in the process pays for the
+            # file read + HOCON parse, off the event loop; once warm, aget's
+            # peek and the fallback inside from_dict() are lock-free reads
+            # with no thread hop, no lock traffic, and no actual suspension
+            # between the throttle stamp and the conversion snapshot.
+            await ConnectivityDictionaryConverter.aget_shared_toolbox_factory()
 
             # Do the conversion
             use_key: str = "connectivity_info"

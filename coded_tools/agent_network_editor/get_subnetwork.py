@@ -17,6 +17,7 @@
 import asyncio
 import logging
 import os
+from time import monotonic
 from typing import Any
 
 from leaf_common.config.config_filter_chain import ConfigFilterChain
@@ -30,12 +31,126 @@ from neuro_san.internals.graph.persistence.served_manifest_config_filter import 
 from pyparsing.exceptions import ParseException
 
 from coded_tools.agent_network_editor.and_logger import AndLogger
-from coded_tools.agent_network_editor.constants import SUBNETWORK_NAMES
 from coded_tools.agent_network_editor.constants import SUBNETWORKS
+from coded_tools.agent_network_editor.shared_process_cache import SharedProcessCache
 from coded_tools.agent_network_editor.sly_data_lock import SlyDataLock
 
 DEFAULT_MANIFEST_FILE = os.path.join("registries", "manifest_and.hocon")
+
+# Upper bound on how stale the shared subnetwork-names list can get from
+# changes a cheap probe cannot see (see _manifest_fingerprint below). One
+# manifest parse per window (~15-20ms, off the event loop) is the whole
+# steady-state refresh cost.
+SUBNETWORK_NAMES_TTL_SECONDS: float = 10.0
+
 logger = AndLogger(logging.getLogger(__name__))
+
+
+def _resolve_manifest_file() -> str:
+    """
+    :return: The designer manifest path: the AGENT_NETWORK_DESIGNER_MANIFEST_FILE
+            env var, or the default. We use a designer-specific env var
+            (rather than AGENT_MANIFEST_FILE) so the designer's subnetwork
+            pool can be a narrow, curated subset of what the server hosts —
+            e.g. only industry/ + generated/ networks, not basic/, tools/,
+            experimental/, or the designer-family agents themselves. The
+            default points at manifest_and.hocon, which composes just those
+            two via `include`.
+    """
+    return os.getenv("AGENT_NETWORK_DESIGNER_MANIFEST_FILE") or DEFAULT_MANIFEST_FILE
+
+
+def _manifest_fingerprint() -> tuple[str, int | None, int]:
+    """
+    Freshness probe for the shared subnetwork-names cache (see
+    SharedProcessCache): the cached list is served only while this value is
+    unchanged. Three components, each covering a different way the list can
+    go stale:
+
+    * the resolved path — an env-var change takes effect on the next read;
+    * the manifest file's mtime — a direct edit invalidates immediately, and
+      a missing manifest (mtime None) self-heals the moment the file appears;
+    * a time bucket that rolls every SUBNETWORK_NAMES_TTL_SECONDS — the
+      manifest composes other manifests via `include` (notably
+      registries/generated/manifest.hocon, which grows every time the
+      designer saves a network), and a cheap probe cannot see those included
+      files, so the TTL bounds that staleness instead.
+
+    :return: (path, mtime_ns or None, time bucket) tuple.
+    """
+    manifest_file: str = _resolve_manifest_file()
+    try:
+        mtime_ns: int | None = os.stat(manifest_file).st_mtime_ns
+    except OSError:
+        mtime_ns = None
+    time_bucket: int = int(monotonic() / SUBNETWORK_NAMES_TTL_SECONDS)
+    return (manifest_file, mtime_ns, time_bucket)
+
+
+def _load_subnetwork_names() -> list[str]:
+    """
+    Loader for the shared subnetwork-names list (runs inside
+    SharedProcessCache, off the event loop when reached via aget()).
+
+    Parses the designer manifest HOCON. pyhocon resolves `include`
+    statements, so composed manifests (e.g. manifest_and.hocon) flatten into
+    a single mapping of "path/to/file.hocon" -> enabled-bool-or-dict entries.
+
+    :return: List of subnetwork name strings (in "/<network_name>" form).
+            A missing or unparseable manifest returns an empty list, which IS
+            published: unlike an immortal cache this entry expires on its own
+            (mtime change or TTL bucket roll, whichever comes first), so a
+            bad manifest cannot poison the process beyond one TTL window —
+            and publishing the empty result prevents a per-call parse storm
+            within that window.
+    """
+    manifest_file: str = _resolve_manifest_file()
+
+    logger.info(">>>>>>>>>>>>>>>>>>>Getting Subnetwork Names from Manifest>>>>>>>>>>>>>>>>>>>")
+    logger.info("Manifest file: %s", manifest_file)
+
+    names: list[str] = []
+    try:
+        # RawManifestRestorer returns None if the file is missing — treated as
+        # an empty manifest (no subnetworks available).
+        raw_manifest: dict[str, Any] = RawManifestRestorer().restore(file_reference=manifest_file)
+        if raw_manifest is None:
+            logger.warning(
+                "Manifest file '%s' not found, no external agents/subnetworks will be available "
+                "in the generated network",
+                manifest_file,
+            )
+            raw_manifest = {}
+
+        # Use neuro-san's canonical manifest filters so we don't reimplement manifest semantics:
+        #   - ManifestKeyConfigFilter:    strips quote chars from quoted HOCON keys
+        #   - ManifestDictConfigFilter:   normalizes bool values to {"serve": ..., ...}
+        #   - ServedManifestConfigFilter: drops non-served entries
+        # We assemble our own chain rather than using ManifestFilterChain because the latter
+        # registers ServedManifestConfigFilter with warn_on_skip=True/entry_for_skipped=True,
+        # which would log a warning per disabled entry and keep them in the result. Here we
+        # want unserved entries silently dropped.
+        filter_chain = ConfigFilterChain()
+        filter_chain.register(ManifestKeyConfigFilter(manifest_file))
+        filter_chain.register(ManifestDictConfigFilter(manifest_file))
+        filter_chain.register(ServedManifestConfigFilter(manifest_file, warn_on_skip=False, entry_for_skipped=False))
+        one_manifest: dict[str, Any] = filter_chain.filter_config(raw_manifest)
+
+        # Derive external network names ("/<network_name>") via the canonical mapper used by
+        # neuro-san (matches RegistryManifestRestorer.find_external_network_names).
+        agent_mapper = AgentFileTreeMapper()
+        for manifest_key in one_manifest.keys():
+            agent_filepath: str = agent_mapper.agent_name_to_filepath(manifest_key)
+            network_name: str = agent_mapper.filepath_to_agent_network_name(agent_filepath)
+            names.append(f"/{network_name}")
+    except ParseException as parse_error:
+        logger.warning(
+            "Failed to parse manifest '%s', no subnetwork names will be available: %s",
+            manifest_file,
+            parse_error,
+        )
+
+    return names
 
 
 # pylint: disable=too-many-ancestors
@@ -55,91 +170,63 @@ class GetSubnetwork(BranchActivation, CodedTool):
     have access to a run_context (e.g. middleware classes).
     """
 
+    # Process-wide cache of the "/<network_name>" list parsed from the
+    # designer manifest (issue #1267). Previously cached per sly_data scope,
+    # so a server handling N concurrent conversations re-parsed the same
+    # manifest N times, on the event loop. Unlike the immortal toolbox
+    # caches, this source legitimately changes at runtime — the designer
+    # saves every generated network into a manifest the top file `include`s —
+    # so the fingerprint (path + mtime + TTL bucket, see
+    # _manifest_fingerprint) keeps the list at most SUBNETWORK_NAMES_TTL_SECONDS
+    # stale. Locking, publish ordering, and the async once-gate live in
+    # SharedProcessCache; access goes through the class by name (not cls) so
+    # a hypothetical subclass shares the one cache instead of splitting it.
+    _shared_subnetwork_names_cache: SharedProcessCache[list[str]] = SharedProcessCache(
+        loader=_load_subnetwork_names, fingerprint=_manifest_fingerprint
+    )
+
+    @classmethod
+    def peek_shared_subnetwork_names(cls) -> list[str] | None:
+        """
+        :return: The shared subnetwork-names list if it has been loaded and is
+                still fresh, else None. Lock-free and safe to call from any
+                thread or event loop. Treat the result as read-only: it is
+                the live shared cache, not a copy — get_subnetwork_names()
+                returns a mutation-safe copy.
+        """
+        return GetSubnetwork._shared_subnetwork_names_cache.peek()
+
+    @classmethod
+    def clear_shared_subnetwork_names_for_testing(cls):
+        """
+        Reset the process-wide subnetwork-names cache. For test isolation only.
+
+        Production code must never call this — staleness is already bounded
+        by the fingerprint. Tests call it (via tests/conftest.py) so names
+        loaded under one test's manifest/env state cannot leak into later
+        tests within the same TTL window. Living here rather than in conftest
+        keeps all the singleton policy in this one class.
+        """
+        GetSubnetwork._shared_subnetwork_names_cache.clear_for_testing()
+
     @staticmethod
-    async def get_subnetwork_names(sly_data: dict[str, Any]) -> list[str]:
+    async def get_subnetwork_names() -> list[str]:
         """
         Get the list of subnetwork names from the **designer manifest** only.
 
         Used by callers (e.g. middleware) that need to validate subnetwork references
         but do not have access to a run_context. Reads only the manifest HOCON, not
-        each subnetwork's HOCON.
+        each subnetwork's HOCON — and at most once per process per
+        SUBNETWORK_NAMES_TTL_SECONDS (or manifest edit), off the event loop,
+        shared by concurrent cold callers.
 
-        :param sly_data: The sly_data dictionary from the agent hierarchy. Acts as a
-                per-session cache via the `SUBNETWORK_NAMES` and `SUBNETWORKS` keys.
-                A `SlyDataLock` named "subnetwork_names_lock" is acquired here so
-                concurrent intra-session callers don't both parse the manifest.
         :return: List of subnetwork name strings (in "/<network_name>" form), or an
-                empty list if the manifest is missing or fails to parse. Empty results
-                are cached too so we don't keep retrying.
+                empty list if the manifest is missing or fails to parse (see
+                the loader for the self-healing semantics). The returned list
+                is a copy, so callers may mutate it without corrupting the
+                shared cache.
         """
-        # Lock per-sly_data so two concurrent intra-session callers don't both parse
-        # the manifest. Lock name is distinct from get_subnetworks() so the two methods
-        # don't block each other.
-        async with await SlyDataLock.get_lock(sly_data, "subnetwork_names_lock"):
-            # Per-session cache hit: if the full subnetwork dict was already loaded by
-            # get_subnetworks(), reuse its keys instead of re-reading the manifest.
-            if SUBNETWORKS in sly_data:
-                return list(sly_data[SUBNETWORKS].keys())
-            if SUBNETWORK_NAMES in sly_data:
-                return sly_data[SUBNETWORK_NAMES]
-
-            # We use a designer-specific env var (rather than AGENT_MANIFEST_FILE) so the designer's
-            # subnetwork pool can be a narrow, curated subset of what the server hosts — e.g. only
-            # industry/ + generated/ networks, not basic/, tools/, experimental/, or the
-            # designer-family agents themselves. Default points at manifest_and.hocon which composes
-            # just those two via `include`.
-            manifest_file: str = os.getenv("AGENT_NETWORK_DESIGNER_MANIFEST_FILE") or DEFAULT_MANIFEST_FILE
-
-            logger.info(">>>>>>>>>>>>>>>>>>>Getting Subnetwork Names from Manifest>>>>>>>>>>>>>>>>>>>")
-            logger.info("Manifest file: %s", manifest_file)
-
-            # Parse the manifest HOCON. pyhocon resolves `include` statements, so composed manifests
-            # (e.g. manifest_and.hocon) flatten into a single mapping of
-            # "path/to/file.hocon" -> enabled-bool-or-dict entries. RawManifestRestorer returns None
-            # if the file is missing — treated as an empty manifest (no subnetworks available).
-            names: list[str] = []
-            try:
-                raw_manifest: dict[str, Any] = await RawManifestRestorer().async_restore(file_reference=manifest_file)
-                if raw_manifest is None:
-                    logger.warning(
-                        "Manifest file '%s' not found, no external agents/subnetworks will be available "
-                        "in the generated network",
-                        manifest_file,
-                    )
-                    raw_manifest = {}
-
-                # Use neuro-san's canonical manifest filters so we don't reimplement manifest semantics:
-                #   - ManifestKeyConfigFilter:    strips quote chars from quoted HOCON keys
-                #   - ManifestDictConfigFilter:   normalizes bool values to {"serve": ..., ...}
-                #   - ServedManifestConfigFilter: drops non-served entries
-                # We assemble our own chain rather than using ManifestFilterChain because the latter
-                # registers ServedManifestConfigFilter with warn_on_skip=True/entry_for_skipped=True,
-                # which would log a warning per disabled entry and keep them in the result. Here we
-                # want unserved entries silently dropped.
-                filter_chain = ConfigFilterChain()
-                filter_chain.register(ManifestKeyConfigFilter(manifest_file))
-                filter_chain.register(ManifestDictConfigFilter(manifest_file))
-                filter_chain.register(
-                    ServedManifestConfigFilter(manifest_file, warn_on_skip=False, entry_for_skipped=False)
-                )
-                one_manifest: dict[str, Any] = filter_chain.filter_config(raw_manifest)
-
-                # Derive external network names ("/<network_name>") via the canonical mapper used by
-                # neuro-san (matches RegistryManifestRestorer.find_external_network_names).
-                agent_mapper = AgentFileTreeMapper()
-                for manifest_key in one_manifest.keys():
-                    agent_filepath: str = agent_mapper.agent_name_to_filepath(manifest_key)
-                    network_name: str = agent_mapper.filepath_to_agent_network_name(agent_filepath)
-                    names.append(f"/{network_name}")
-            except ParseException as parse_error:
-                logger.warning(
-                    "Failed to parse manifest '%s', no subnetwork names will be available: %s",
-                    manifest_file,
-                    parse_error,
-                )
-
-            sly_data[SUBNETWORK_NAMES] = names
-        return names
+        return list(await GetSubnetwork._shared_subnetwork_names_cache.aget())
 
     async def get_subnetworks(self, sly_data: dict[str, Any]) -> dict[str, Any]:
         """
@@ -169,8 +256,9 @@ class GetSubnetwork(BranchActivation, CodedTool):
             if SUBNETWORKS in sly_data:
                 return sly_data[SUBNETWORKS]
 
-            # Get the curated subset of names from the designer manifest. Cheap and cached.
-            names: list[str] = await self.get_subnetwork_names(sly_data)
+            # Get the curated subset of names from the designer manifest.
+            # Cheap: served from the process-wide cache.
+            names: list[str] = await GetSubnetwork.get_subnetwork_names()
             if not names:
                 sly_data[SUBNETWORKS] = {}
                 return {}

@@ -17,58 +17,21 @@
 # fixtures that apply automatically to every test under this directory —
 # pytest discovers and loads it by name, so it cannot be renamed to something
 # more descriptive without the autouse fixture below silently ceasing to run.
-import sys
-
+# The inventory of the process-wide globals this fixture resets lives in
+# coded_tools/agent_network_editor/globals.py.
 import pytest
 
-# Central inventory of the process-wide caches used by the Agent Network
-# Designer family, as (module, class, test-only clear method) triples. Each
-# cache lives on its owning class as a peek / get / clear-for-testing triple
-# (see ConnectivityDictionaryConverter.get_shared_toolbox_factory() for the
-# canonical pattern). Each captures file/env-var state at its first load and
-# is never refreshed, so a test that populates one would otherwise leak that
-# state into every later test in the same process, producing order-dependent
-# results. Add an entry here whenever a new shared cache is introduced.
-_PROCESS_CACHE_CLEARERS: list[tuple[str, str, str]] = [
-    # The loaded ToolboxFactory used for connectivity-style conversion
-    # of agent network definitions (issue #1262).
-    (
-        "coded_tools.agent_network_editor.connectivity_dictionary_converter",
-        "ConnectivityDictionaryConverter",
-        "clear_shared_toolbox_factory_for_testing",
-    ),
-    # The {tool_name: description} mapping parsed from the designer's
-    # toolbox info file (issue #1268).
-    (
-        "coded_tools.agent_network_editor.get_toolbox",
-        "GetToolbox",
-        "clear_shared_toolbox_info_for_testing",
-    ),
-]
-
-
-def _clear_process_caches():
-    """
-    Clear every registered process-wide cache.
-
-    Modules are looked up via sys.modules instead of imported directly so
-    tests that never touch these classes don't pay for importing neuro-san
-    internals at collection time.
-    """
-    for module_name, class_name, clear_method_name in _PROCESS_CACHE_CLEARERS:
-        module = sys.modules.get(module_name)
-        if module is not None:
-            getattr(getattr(module, class_name), clear_method_name)()
+from coded_tools.agent_network_editor.globals import clear_all_process_globals_for_testing
 
 
 @pytest.fixture(autouse=True)
-def reset_process_caches():
+def reset_process_globals():
     """
     Clear the process-wide caches before and after each test.
 
     Clearing before the test as well guards against state populated outside
     any test, e.g. during collection or session setup.
     """
-    _clear_process_caches()
+    clear_all_process_globals_for_testing()
     yield
-    _clear_process_caches()
+    clear_all_process_globals_for_testing()

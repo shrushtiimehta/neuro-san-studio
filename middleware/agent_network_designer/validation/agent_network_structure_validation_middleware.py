@@ -55,10 +55,10 @@ class AgentNetworkStructureValidationMiddleware(AgentNetworkValidationMiddleware
         :return: A list of error strings (empty if valid)
         """
 
-        # Get infos from the agent network editor's tools. Subnetwork names and
-        # MCP servers are cached in sly_data by their respective tools; toolbox
-        # info comes from GetToolbox's process-wide cache.
-        subnetwork_names: list[str] = await GetSubnetwork.get_subnetwork_names(self.sly_data)
+        # Get infos from the agent network editor's tools. Subnetwork names
+        # and toolbox info come from their process-wide caches; MCP servers
+        # are still cached in sly_data by their tool.
+        subnetwork_names: list[str] = await GetSubnetwork.get_subnetwork_names()
         mcp_servers: list[str] = await GetMcpTool.get_mcp_servers(self.sly_data)
         toolbox_tools: dict[str, Any] = await GetToolbox.get_toolbox_info()
 
