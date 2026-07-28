@@ -21,7 +21,7 @@
 # coded_tools/agent_network_editor/globals.py.
 import pytest
 
-from coded_tools.agent_network_editor.globals import clear_all_process_globals_for_testing
+from coded_tools.agent_network_editor.globals import ProcessGlobals
 
 
 @pytest.fixture(autouse=True)
@@ -32,6 +32,6 @@ def reset_process_globals():
     Clearing before the test as well guards against state populated outside
     any test, e.g. during collection or session setup.
     """
-    clear_all_process_globals_for_testing()
+    ProcessGlobals.clear_all_for_testing()
     yield
-    clear_all_process_globals_for_testing()
+    ProcessGlobals.clear_all_for_testing()

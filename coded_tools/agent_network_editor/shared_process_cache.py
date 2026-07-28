@@ -18,11 +18,11 @@ Generic process-wide, load-once cache for expensive shared values.
 
 This is the one copy of the locking and publish discipline that the Agent
 Network Designer family's shared caches were previously each hand-rolling
-(ConnectivityDictionaryConverter's ToolboxFactory for issue #1262, GetToolbox's
-toolbox info for #1268, GetSubnetwork's subnetwork names for #1267). Each
-owning class keeps its public peek/get/clear_for_testing API and delegates to
-an instance of this class, so all cache *policy* stays visible on the owner
-while the subtle *mechanism* lives here once.
+(ConnectivityDictionaryConverter's ToolboxFactory, GetToolbox's toolbox info,
+GetSubnetwork's subnetwork names). Each owning class keeps its public
+accessors and clear_*_for_testing API and delegates to an instance of this
+class, so all cache *policy* stays visible on the owner while the subtle
+*mechanism* lives here once.
 """
 
 from asyncio import Task

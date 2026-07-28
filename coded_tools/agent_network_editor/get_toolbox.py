@@ -28,58 +28,58 @@ DEFAULT_TOOLBOX_INFO_FILE = os.path.join("neuro_san_studio", "toolbox", "agent_n
 logger = AndLogger(logging.getLogger(__name__))
 
 
-def _load_shared_toolbox_info() -> dict[str, str]:
-    """
-    Loader for the shared toolbox info (runs inside SharedProcessCache).
-
-    Resolves the toolbox info file — the AGENT_NETWORK_DESIGNER_TOOLBOX_INFO_FILE
-    env var or the default — reads and parses it, and reduces each entry to its
-    description.
-
-    :return: dict mapping tool names to descriptions.
-    :raise FileNotFoundError: When the file does not exist (after logging a
-            warning with the resolved path). The cache publishes nothing on a
-            raise, so a transient gap — a deploy replacing the file, a
-            wrong-CWD launch — cannot pin an empty toolbox for the life of
-            the process: the next call retries and heals the moment the file
-            appears. A malformed file raises out of the parse, likewise
-            unpublished.
-    """
-    # Check for toolbox info file in env var
-    toolbox_info_file: str = os.getenv("AGENT_NETWORK_DESIGNER_TOOLBOX_INFO_FILE")
-    if not toolbox_info_file:
-        # Use a default if no value specified
-        toolbox_info_file = DEFAULT_TOOLBOX_INFO_FILE
-
-    # Go fish — once per process once it succeeds.
-    logger.info(">>>>>>>>>>>>>>>>>>>Getting Tool Definition from Toolbox>>>>>>>>>>>>>>>>>>>")
-    logger.info("Toolbox info file: %s", toolbox_info_file)
-
-    try:
-        raw_tools: dict[str, Any] = ToolboxInfoRestorer().restore(toolbox_info_file)
-    except FileNotFoundError:
-        # The warning lives here because only the loader knows the resolved
-        # path; the callers' policy (return empty for this call) lives with
-        # them. The recurring warning is the operator's signal.
-        logger.warning("Error: Failed to load toolbox info from %s.", toolbox_info_file)
-        raise
-
-    logger.info("Successfully loaded the following toolbox: %s", str(raw_tools))
-
-    # Keep only each tool's description.
-    tools: dict[str, str] = {}
-    for tool_name, tool_info in raw_tools.items():
-        tools[tool_name] = tool_info.get("description", "")
-    return tools
-
-
 class GetToolbox(CodedTool):
     """
     CodedTool implementation which provides a way to get tool definition from toolbox info file
     """
 
+    @staticmethod
+    def _load_shared_toolbox_info() -> dict[str, str]:
+        """
+        Loader for the shared toolbox info (runs inside SharedProcessCache).
+
+        Resolves the toolbox info file — the AGENT_NETWORK_DESIGNER_TOOLBOX_INFO_FILE
+        env var or the default — reads and parses it, and reduces each entry to its
+        description.
+
+        :return: dict mapping tool names to descriptions.
+        :raise FileNotFoundError: When the file does not exist (after logging a
+                warning with the resolved path). The cache publishes nothing on a
+                raise, so a transient gap — a deploy replacing the file, a
+                wrong-CWD launch — cannot pin an empty toolbox for the life of
+                the process: the next call retries and heals the moment the file
+                appears. A malformed file raises out of the parse, likewise
+                unpublished.
+        """
+        # Check for toolbox info file in env var
+        toolbox_info_file: str = os.getenv("AGENT_NETWORK_DESIGNER_TOOLBOX_INFO_FILE")
+        if not toolbox_info_file:
+            # Use a default if no value specified
+            toolbox_info_file = DEFAULT_TOOLBOX_INFO_FILE
+
+        # Go fish — once per process once it succeeds.
+        logger.info(">>>>>>>>>>>>>>>>>>>Getting Tool Definition from Toolbox>>>>>>>>>>>>>>>>>>>")
+        logger.info("Toolbox info file: %s", toolbox_info_file)
+
+        try:
+            raw_tools: dict[str, Any] = ToolboxInfoRestorer().restore(toolbox_info_file)
+        except FileNotFoundError:
+            # The warning lives here because only the loader knows the resolved
+            # path; the callers' policy (return empty for this call) lives with
+            # them. The recurring warning is the operator's signal.
+            logger.warning("Error: Failed to load toolbox info from %s.", toolbox_info_file)
+            raise
+
+        logger.info("Successfully loaded the following toolbox: %s", str(raw_tools))
+
+        # Keep only each tool's description.
+        tools: dict[str, str] = {}
+        for tool_name, tool_info in raw_tools.items():
+            tools[tool_name] = tool_info.get("description", "")
+        return tools
+
     # Process-wide cache of the {tool_name: description} mapping parsed from
-    # the toolbox info file (issue #1268). With no fingerprint the mapping is
+    # the toolbox info file. With no fingerprint the mapping is
     # deliberately never refreshed once loaded, so picking up an edited
     # toolbox info file requires a process restart — the same trade-off as
     # ConnectivityDictionaryConverter's shared ToolboxFactory. Previously the

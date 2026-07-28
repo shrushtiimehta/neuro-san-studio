@@ -33,31 +33,6 @@ from coded_tools.agent_network_editor.shared_process_cache import SharedProcessC
 Connectivity = list[dict[str, Any]]
 
 
-def _load_shared_toolbox_factory() -> ContextTypeToolboxFactory:
-    """
-    Loader for the shared ToolboxFactory (runs inside SharedProcessCache).
-
-    The empty config dict is equivalent to the None that
-    DesignerNetworkInspector.get_config() returns: the context type defaults
-    to "langchain" and any AGENT_TOOLBOX_INFO_FILE env var override is still
-    honored inside ToolboxFactory.
-
-    Returning only after load() succeeds matters twice over (the cache
-    publishes nothing when this raises): on failure (e.g. a bad
-    AGENT_TOOLBOX_INFO_FILE) the next call retries instead of serving a
-    half-initialized factory, and — because neuro-san 0.6.83's
-    ToolboxFactory.load() guards itself with a plain `loaded` flag and no
-    lock — publishing a fully load()-ed instance is what makes
-    ConnectivityReporter's unconditional per-report load() call a safe no-op
-    on every thread that can see this factory.
-
-    :return: A fully load()-ed ContextTypeToolboxFactory.
-    """
-    factory: ContextTypeToolboxFactory = MasterToolboxFactory.create_toolbox_factory({})
-    factory.load()
-    return factory
-
-
 class ConnectivityDictionaryConverter(DictionaryConverter):
     """
     DictionaryConverter implementation for conversion back and forth from the
@@ -69,8 +44,33 @@ class ConnectivityDictionaryConverter(DictionaryConverter):
     yet-another format.
     """
 
+    @staticmethod
+    def _load_shared_toolbox_factory() -> ContextTypeToolboxFactory:
+        """
+        Loader for the shared ToolboxFactory (runs inside SharedProcessCache).
+
+        The empty config dict is equivalent to the None that
+        DesignerNetworkInspector.get_config() returns: the context type defaults
+        to "langchain" and any AGENT_TOOLBOX_INFO_FILE env var override is still
+        honored inside ToolboxFactory.
+
+        Returning only after load() succeeds matters twice over (the cache
+        publishes nothing when this raises): on failure (e.g. a bad
+        AGENT_TOOLBOX_INFO_FILE) the next call retries instead of serving a
+        half-initialized factory, and — because neuro-san 0.6.83's
+        ToolboxFactory.load() guards itself with a plain `loaded` flag and no
+        lock — publishing a fully load()-ed instance is what makes
+        ConnectivityReporter's unconditional per-report load() call a safe no-op
+        on every thread that can see this factory.
+
+        :return: A fully load()-ed ContextTypeToolboxFactory.
+        """
+        factory: ContextTypeToolboxFactory = MasterToolboxFactory.create_toolbox_factory({})
+        factory.load()
+        return factory
+
     # Process-wide cache of the loaded ToolboxFactory used by from_dict() when
-    # no factory is passed to the constructor (issue #1262). The toolbox info
+    # no factory is passed to the constructor. The toolbox info
     # is loaded lazily on the first use in the process — the default file
     # ships inside the neuro-san package and the optional override comes from
     # the AGENT_TOOLBOX_INFO_FILE env var, both read at that first use — and
