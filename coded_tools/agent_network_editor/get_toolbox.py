@@ -42,14 +42,15 @@ class GetToolbox(CodedTool):
         env var or the default — reads and parses it, and reduces each entry to its
         description.
 
-        :return: dict mapping tool names to descriptions.
-        :raise FileNotFoundError: When the file does not exist (after logging a
-                warning with the resolved path). The cache publishes nothing on a
-                raise, so a transient gap — a deploy replacing the file, a
-                wrong-CWD launch — cannot pin an empty toolbox for the life of
-                the process: the next call retries and heals the moment the file
-                appears. A malformed file raises out of the parse, likewise
-                unpublished.
+        :return: dict mapping tool names to descriptions; never empty.
+        :raise FileNotFoundError: When the file does not exist, or when it
+                yields no tools at all (after logging a warning with the
+                resolved path). The cache publishes nothing on a raise, so a
+                transient gap — a deploy replacing the file, a wrong-CWD
+                launch, a read that comes back empty — cannot pin an empty
+                toolbox for the life of the process: the next call retries
+                and heals the moment the file reads correctly. A malformed
+                file raises out of the parse, likewise unpublished.
         """
         # Check for toolbox info file in env var
         toolbox_info_file: str = os.getenv("AGENT_NETWORK_DESIGNER_TOOLBOX_INFO_FILE")
@@ -76,6 +77,18 @@ class GetToolbox(CodedTool):
         tools: dict[str, str] = {}
         for tool_name, tool_info in raw_tools.items():
             tools[tool_name] = tool_info.get("description", "")
+
+        if not tools:
+            # The designer's toolbox file always defines tools, so an empty
+            # mapping only ever means the read went wrong — observed in the
+            # wild as a one-off restore() returning {} that this cache (no
+            # fingerprint) then pinned until a server restart. Raising
+            # instead of returning keeps the empty result unpublished: this
+            # call degrades to an empty toolbox, and the next call retries
+            # and heals. FileNotFoundError so callers' existing
+            # missing-file policy applies unchanged.
+            logger.warning("Toolbox info from %s came back empty; treating as a failed load.", toolbox_info_file)
+            raise FileNotFoundError(f"Toolbox info file {toolbox_info_file} yielded no tools")
         return tools
 
     # Process-wide cache of the {tool_name: description} mapping parsed from
