@@ -37,9 +37,6 @@ SUBNETWORK_NAMES: str = "subnetwork_names"
 # surface available subnetworks (with descriptions) to the LLM.
 SUBNETWORKS: str = "subnetworks"
 
-# Cached dict mapping toolbox tool name to its description.
-TOOLBOX_INFO: str = "toolbox_info"
-
 # Cached ProgressHandler instance controls AGENT_PROGRESS reporting throttling
 PROGRESS_HANDLER: str = "progress_handler"
 
