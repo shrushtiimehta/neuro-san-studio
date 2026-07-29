@@ -26,9 +26,6 @@ AGENT_NETWORK_HOCON_TEXT: str = "agent_network_hocon_text"
 # Name of the agent network, used as the persistence file path or reservation identifier.
 AGENT_NETWORK_NAME: str = "agent_network_name"
 
-# Cached list of MCP server URLs available to the designer.
-MCP_SERVERS: str = "mcp_servers"
-
 # Cached ProgressHandler instance controls AGENT_PROGRESS reporting throttling
 PROGRESS_HANDLER: str = "progress_handler"
 
