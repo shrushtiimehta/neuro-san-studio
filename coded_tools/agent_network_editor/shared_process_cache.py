@@ -36,10 +36,10 @@ from typing import Generic
 from typing import TypeVar
 from weakref import WeakKeyDictionary
 
-CachedValue = TypeVar("CachedValue")
+T = TypeVar("T")
 
 
-class SharedProcessCache(Generic[CachedValue]):
+class SharedProcessCache(Generic[T]):
     """
     Process-wide cache of a single expensive value, safe across threads and
     event loops.
@@ -76,7 +76,7 @@ class SharedProcessCache(Generic[CachedValue]):
       load out from under the others.
     """
 
-    def __init__(self, loader: Callable[[], CachedValue], fingerprint: Callable[[], Any] | None = None):
+    def __init__(self, loader: Callable[[], T], fingerprint: Callable[[], Any] | None = None):
         """
         Constructor
 
@@ -89,7 +89,7 @@ class SharedProcessCache(Generic[CachedValue]):
         self._fingerprint = fingerprint
         # The one shared slot: None, or a (value, fingerprint-at-load) pair
         # stored as a single tuple so lock-free readers see it atomically.
-        self._entry: tuple[CachedValue, Any] | None = None
+        self._entry: tuple[T, Any] | None = None
         self._lock = Lock()
         # Per-event-loop in-flight load task, so concurrent async callers on
         # one loop share a single to_thread() dispatch. Entries are removed
@@ -100,7 +100,7 @@ class SharedProcessCache(Generic[CachedValue]):
         # the lock in get() still serializes the actual work.
         self._loads_in_flight: WeakKeyDictionary = WeakKeyDictionary()
 
-    def peek(self) -> CachedValue | None:
+    def peek(self) -> T | None:
         """
         :return: The cached value if it is present and still fresh per the
                 fingerprint, else None. Lock-free and safe to call from any
@@ -109,7 +109,7 @@ class SharedProcessCache(Generic[CachedValue]):
                 result as read-only unless the owner documents otherwise — it
                 is the live shared value, not a copy.
         """
-        entry: tuple[CachedValue, Any] | None = self._entry
+        entry: tuple[T, Any] | None = self._entry
         if entry is None:
             return None
         value, loaded_fingerprint = entry
@@ -119,7 +119,7 @@ class SharedProcessCache(Generic[CachedValue]):
             return None
         return value
 
-    def get(self) -> CachedValue:
+    def get(self) -> T:
         """
         Get the value, running the loader on a miss (first call in the
         process, or the fingerprint went stale).
@@ -132,7 +132,7 @@ class SharedProcessCache(Generic[CachedValue]):
                 propagate without publishing anything, so the next call
                 retries.
         """
-        value: CachedValue | None = self.peek()
+        value: T | None = self.peek()
         if value is not None:
             return value
 
@@ -142,7 +142,7 @@ class SharedProcessCache(Generic[CachedValue]):
             # waited for the lock, and as the freshness capture stored with
             # the value below — so a stat-style probe runs once, not twice.
             current_fingerprint: Any = self._fingerprint() if self._fingerprint is not None else None
-            entry: tuple[CachedValue, Any] | None = self._entry
+            entry: tuple[T, Any] | None = self._entry
             if entry is not None and (self._fingerprint is None or entry[1] == current_fingerprint):
                 return entry[0]
 
@@ -155,7 +155,7 @@ class SharedProcessCache(Generic[CachedValue]):
 
         return value
 
-    async def aget(self) -> CachedValue:
+    async def aget(self) -> T:
         """
         Async get(): warm reads return via the lock-free peek with no
         awaiting at all; a cold load runs in a worker thread, shared by every
@@ -165,7 +165,7 @@ class SharedProcessCache(Generic[CachedValue]):
                 propagate to every caller awaiting that load, and the next
                 aget() starts a fresh attempt.
         """
-        value: CachedValue | None = self.peek()
+        value: T | None = self.peek()
         if value is not None:
             return value
 

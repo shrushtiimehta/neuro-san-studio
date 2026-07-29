@@ -207,7 +207,7 @@ class AgentNetworkPersistenceMiddleware(AgentMiddleware):
             # the export would otherwise pay the one-time toolbox file read
             # and HOCON parse on the event loop.
             if agent_progress_style == "connectivity":
-                await ConnectivityDictionaryConverter.get_shared_toolbox_factory()
+                await ConnectivityDictionaryConverter.aget_shared_toolbox_factory()
             self._determine_exported_network_definition(self.sly_data, agent_progress_style)
 
             self.logger.debug(">>>>>>>>>>>>>>>>>>> DONE %s !!!>>>>>>>>>>>>>>>>>>", self.__class__.__name__)

@@ -37,6 +37,15 @@ from coded_tools.agent_network_editor.sly_data_lock import SlyDataLock
 
 DEFAULT_MANIFEST_FILE = os.path.join("registries", "manifest_and.hocon")
 
+# Upper bound on how stale the shared subnetwork-names list can get from
+# changes a cheap probe cannot see (see _manifest_fingerprint below). One
+# manifest parse per window (~15-20ms, off the event loop) is the whole
+# steady-state refresh cost. Deployment assumption: server deployments never
+# write the manifest at runtime — generated networks are only saved into the
+# local manifest on local runs — so this TTL exists to keep local runs fresh
+# after a save and otherwise acts as a safety net.
+SUBNETWORK_NAMES_TTL_SECONDS: float = 10.0
+
 logger = AndLogger(logging.getLogger(__name__))
 
 
@@ -72,29 +81,6 @@ class GetSubnetwork(BranchActivation, CodedTool):
         return os.getenv("AGENT_NETWORK_DESIGNER_MANIFEST_FILE") or DEFAULT_MANIFEST_FILE
 
     @staticmethod
-    def _manifest_update_period_seconds() -> float:
-        """
-        :return: The manifest refresh period, read from the same
-                AGENT_MANIFEST_UPDATE_PERIOD_SECONDS setting that drives the
-                neuro-san server's own periodic manifest updates (<= 0
-                disables them; unset mirrors the server's default of 0, and
-                the studio's local runner exports 5). Keying the shared
-                subnetwork-names cache to this signal keeps the designer's
-                view aligned with what the server can actually serve: when
-                the server never picks up new manifest entries, a fresher
-                name list would only advertise networks that are not
-                reachable yet — so on a static server the cached list goes
-                static too (a manifest path or mtime change still refreshes
-                it). When updates are enabled, one manifest parse per period
-                (~15-20ms, off the event loop, and only if a caller actually
-                reads in that period) is the whole steady-state refresh cost.
-        """
-        try:
-            return float(os.getenv("AGENT_MANIFEST_UPDATE_PERIOD_SECONDS", "0"))
-        except ValueError:
-            return 0.0
-
-    @staticmethod
     def _manifest_fingerprint() -> tuple[str, int | None, int]:
         """
         Freshness probe for the shared subnetwork-names cache (see
@@ -105,15 +91,12 @@ class GetSubnetwork(BranchActivation, CodedTool):
         * the resolved path — an env-var change takes effect on the next read;
         * the manifest file's mtime — a direct edit invalidates immediately, and
           a missing manifest (mtime None) self-heals the moment the file appears;
-        * a time bucket that rolls once per manifest-update period (see
-          _manifest_update_period_seconds) — the manifest composes other
-          manifests via `include` (notably registries/generated/manifest.hocon,
-          which grows every time the designer saves a network on a local run;
-          server deployments never write the manifest), and a cheap probe
-          cannot see those included files, so the rolling bucket bounds that
-          staleness instead. With updates disabled (period <= 0, the
-          static-server default) the bucket is constant, so only a path or
-          mtime change invalidates.
+        * a time bucket that rolls every SUBNETWORK_NAMES_TTL_SECONDS — the
+          manifest composes other manifests via `include` (notably
+          registries/generated/manifest.hocon, which grows every time the
+          designer saves a network on a local run; server deployments never
+          write the manifest), and a cheap probe cannot see those included
+          files, so the TTL bounds that staleness instead.
 
         :return: (path, mtime_ns or None, time bucket) tuple.
         """
@@ -122,8 +105,7 @@ class GetSubnetwork(BranchActivation, CodedTool):
             mtime_ns: int | None = os.stat(manifest_file).st_mtime_ns
         except OSError:
             mtime_ns = None
-        period: float = GetSubnetwork._manifest_update_period_seconds()
-        time_bucket: int = int(monotonic() / period) if period > 0 else 0
+        time_bucket: int = int(monotonic() / SUBNETWORK_NAMES_TTL_SECONDS)
         return (manifest_file, mtime_ns, time_bucket)
 
     @staticmethod
@@ -139,12 +121,10 @@ class GetSubnetwork(BranchActivation, CodedTool):
         :return: List of subnetwork name strings (in "/<network_name>" form).
                 A missing or unparseable manifest returns an empty list, which IS
                 published: unlike an immortal cache this entry expires on its own
-                (mtime change or manifest-update-period roll, whichever comes
-                first), so a bad manifest cannot poison the process beyond one
-                refresh period — and publishing the empty result prevents a
-                per-call parse storm within it. (On a static server with
-                updates disabled, healing relies on the mtime/path change that
-                fixing the manifest entails.)
+                (mtime change or TTL bucket roll, whichever comes first), so a
+                bad manifest cannot poison the process beyond one TTL window —
+                and publishing the empty result prevents a per-call parse storm
+                within that window.
         """
         manifest_file: str = GetSubnetwork._resolve_manifest_file()
 
@@ -206,11 +186,9 @@ class GetSubnetwork(BranchActivation, CodedTool):
     # caches, this source legitimately changes at runtime on local runs —
     # the designer saves every generated network into a manifest the top
     # file `include`s; server deployments persist elsewhere and never write
-    # it — so the fingerprint (path + mtime + a manifest-update-period
-    # bucket, see _manifest_fingerprint) keeps the list at most one
-    # AGENT_MANIFEST_UPDATE_PERIOD_SECONDS period stale, the same cadence at
-    # which the server itself picks up new manifest entries.
-    # Locking, publish ordering, and the async once-gate live in
+    # it — so the fingerprint (path + mtime + TTL bucket, see
+    # _manifest_fingerprint) keeps the list at most SUBNETWORK_NAMES_TTL_SECONDS
+    # stale. Locking, publish ordering, and the async once-gate live in
     # SharedProcessCache; access goes through the class by name (not cls) so
     # a hypothetical subclass shares the one cache instead of splitting it.
     _shared_subnetwork_names_cache: SharedProcessCache[list[str]] = SharedProcessCache(
@@ -238,7 +216,7 @@ class GetSubnetwork(BranchActivation, CodedTool):
         Used by callers (e.g. middleware) that need to validate subnetwork references
         but do not have access to a run_context. Reads only the manifest HOCON, not
         each subnetwork's HOCON — and at most once per process per
-        manifest-update period (or manifest edit), off the event loop,
+        SUBNETWORK_NAMES_TTL_SECONDS (or manifest edit), off the event loop,
         shared by concurrent cold callers.
 
         :return: List of subnetwork name strings (in "/<network_name>" form), or an
@@ -279,7 +257,7 @@ class GetSubnetwork(BranchActivation, CodedTool):
 
             # Get the curated subset of names from the designer manifest.
             # Cheap: served from the process-wide cache.
-            names: list[str] = await self.get_subnetwork_names()
+            names: list[str] = await GetSubnetwork.get_subnetwork_names()
             if not names:
                 sly_data[SUBNETWORKS] = {}
                 return {}
