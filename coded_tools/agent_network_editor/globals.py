@@ -82,6 +82,25 @@ class ProcessGlobals:  # pylint: disable=too-few-public-methods
     #             .AgentNetworkStructureValidationMiddleware.validate();
     #             agent_network_persistence_middleware.AgentNetworkPersistenceMiddleware
     #             ._assemble_and_persist().
+    #
+    # 4. Shared subnetwork descriptions
+    #    Holds:   the {/<network_name>: front-man description} mapping shown
+    #             to the designer LLM, fetched via one session.function({})
+    #             call per subnetwork.
+    #    Lives:   get_subnetwork.GetSubnetwork (async get_subnetworks)
+    #    Expiry:  the same fingerprint as the subnetwork names above (they
+    #             share _manifest_fingerprint), so names and descriptions go
+    #             stale and refresh together. Unlike the other caches it has
+    #             no loader: descriptions can only be fetched through a live
+    #             run_context's session factory, so the first
+    #             get_subnetworks() call of each refresh period fills the
+    #             cache in-context (SharedProcessCache.aget_or_fill). A fill
+    #             whose fetches ALL failed raises instead of publishing —
+    #             that failure's recovery is invisible to the fingerprint —
+    #             and the cache is bypassed entirely when AGENT_AUTHORIZER
+    #             is set, because /function responses are then
+    #             caller-specific (see _shared_descriptions_cache_enabled).
+    #    Used by: GetSubnetwork.get_subnetworks() (the coded tool path).
     # -----------------------------------------------------------------------
 
     # Machine-readable registry of the entries above, as
@@ -102,6 +121,11 @@ class ProcessGlobals:  # pylint: disable=too-few-public-methods
             "coded_tools.agent_network_editor.get_subnetwork",
             "GetSubnetwork",
             "clear_shared_subnetwork_names_for_testing",
+        ),
+        (
+            "coded_tools.agent_network_editor.get_subnetwork",
+            "GetSubnetwork",
+            "clear_shared_subnetwork_descriptions_for_testing",
         ),
     ]
 

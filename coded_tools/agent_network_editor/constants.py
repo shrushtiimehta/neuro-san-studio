@@ -29,10 +29,6 @@ AGENT_NETWORK_NAME: str = "agent_network_name"
 # Cached list of MCP server URLs available to the designer.
 MCP_SERVERS: str = "mcp_servers"
 
-# Cached dict mapping external agent / subnetwork name to its front-man's description. Used when the editor needs to
-# surface available subnetworks (with descriptions) to the LLM.
-SUBNETWORKS: str = "subnetworks"
-
 # Cached ProgressHandler instance controls AGENT_PROGRESS reporting throttling
 PROGRESS_HANDLER: str = "progress_handler"
 
