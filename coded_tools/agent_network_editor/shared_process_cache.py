@@ -29,6 +29,7 @@ from asyncio import Task
 from asyncio import get_running_loop
 from asyncio import shield
 from asyncio import to_thread
+from functools import partial
 from threading import Lock
 from typing import Any
 from typing import Awaitable
@@ -235,7 +236,7 @@ class SharedProcessCache(Generic[CachedValue]):
                 "SharedProcessCache miss on a cache with no loader; this cache can only be filled via aget_or_fill()."
             )
 
-        return await self._await_shared_load(lambda: to_thread(self.get))
+        return await self._await_shared_load(partial(to_thread, self.get))
 
     async def aget_or_fill(self, filler: Callable[[], Awaitable[CachedValue]]) -> CachedValue:
         """
@@ -272,7 +273,7 @@ class SharedProcessCache(Generic[CachedValue]):
             # lock on the event loop — stalling every coroutine on it.
             raise RuntimeError("SharedProcessCache has a loader; read it via get()/aget() instead of aget_or_fill().")
 
-        return await self._await_shared_load(lambda: self._fill_and_publish(filler))
+        return await self._await_shared_load(partial(self._fill_and_publish, filler))
 
     async def _await_shared_load(self, start_load: Callable[[], Awaitable[CachedValue]]) -> CachedValue:
         """
