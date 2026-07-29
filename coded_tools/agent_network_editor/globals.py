@@ -121,10 +121,13 @@ class ProcessGlobals:  # pylint: disable=too-few-public-methods
     #    Lives:   get_mcp_tool.GetMcpTool (async get_mcp_tool_descriptions)
     #    Expiry:  mcp_info.hocon path/mtime change, or one
     #             AGENT_NETWORK_DESIGNER_MCP_TOOLS_TTL_SECONDS window
-    #             (default 300s; <= 0 disables time-based refresh) — the
+    #             (default 300s, clamped to at least twice the per-server
+    #             fetch cap; <= 0 disables time-based refresh) — the
     #             sources are external servers with no local change signal,
     #             so the TTL is both the freshness bound and the recovery
-    #             bound after a failed or partial fetch.
+    #             bound after a failed or partial fetch. With time-based
+    #             refresh disabled, an all-failed fetch raises instead of
+    #             publishing, so recovery stays possible.
     #    Used by: GetMcpTool.async_invoke() (the coded tool the editor LLM
     #             calls).
     # -----------------------------------------------------------------------

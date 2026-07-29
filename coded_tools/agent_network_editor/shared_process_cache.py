@@ -30,7 +30,10 @@ from asyncio import get_running_loop
 from asyncio import shield
 from asyncio import to_thread
 from functools import partial
+from math import isfinite
+from os import stat
 from threading import Lock
+from time import monotonic
 from typing import Any
 from typing import Awaitable
 from typing import Callable
@@ -64,6 +67,8 @@ class SharedProcessCache(Generic[CachedValue]):
       fingerprint no longer matches the stored one, the entry is treated as a
       miss and reloaded. It must be lock-free-safe and must not raise. When
       None, the value is loaded once and lives for the life of the process.
+      stat_mtime_ns() and time_bucket() below are the standard building
+      blocks for composing such fingerprints.
 
     Concurrency notes (the reasoning previously duplicated per cache):
     * The guard is a threading.Lock rather than an asyncio.Lock because
@@ -125,6 +130,41 @@ class SharedProcessCache(Generic[CachedValue]):
         # between loops are benign: at worst two loops each run a load, and
         # the lock in get() still serializes the actual work.
         self._loads_in_flight: WeakKeyDictionary = WeakKeyDictionary()
+
+    @staticmethod
+    def stat_mtime_ns(path: str) -> int | None:
+        """
+        Fingerprint building block: a file's modification time.
+
+        :param path: The file to probe.
+        :return: The file's st_mtime_ns, or None when it cannot be stat-ed
+                (missing file, permission problem, ...). Never raises, per
+                the fingerprint contract — and None compares like any other
+                component value, so "file missing" is itself a version that
+                goes stale the moment the file appears.
+        """
+        try:
+            return stat(path).st_mtime_ns
+        except OSError:
+            return None
+
+    @staticmethod
+    def time_bucket(period_seconds: float) -> int:
+        """
+        Fingerprint building block: TTL-style expiry for sources with no
+        observable change signal, as a counter that increments once per
+        period (folding it into a fingerprint makes the entry a miss once
+        per period). Based on the monotonic clock, so system clock
+        adjustments can neither expire an entry early nor immortalize it.
+
+        :param period_seconds: The refresh period. A value <= 0 (or any
+                non-finite value, which could not roll anyway) freezes the
+                bucket at 0 — no time-based expiry.
+        :return: The current bucket number.
+        """
+        if period_seconds > 0 and isfinite(period_seconds):
+            return int(monotonic() / period_seconds)
+        return 0
 
     def peek(self) -> CachedValue | None:
         """

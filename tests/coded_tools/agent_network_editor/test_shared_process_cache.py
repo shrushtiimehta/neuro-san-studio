@@ -24,6 +24,7 @@ rather than depending on an asyncio pytest plugin.
 """
 
 import asyncio
+import tempfile
 import threading
 import time
 from unittest import TestCase
@@ -363,3 +364,17 @@ class TestSharedProcessCache(TestCase):
             return value
 
         self.assertEqual(asyncio.run(run()), "load-2")
+
+    def test_stat_mtime_ns_probes_without_raising(self):
+        """The mtime building block reports a bad path as None, per the fingerprint contract."""
+        self.assertIsNone(SharedProcessCache.stat_mtime_ns("/nonexistent/definitely/not/here"))
+        with tempfile.NamedTemporaryFile() as probe:
+            self.assertIsInstance(SharedProcessCache.stat_mtime_ns(probe.name), int)
+
+    def test_time_bucket_rolls_with_the_period_and_freezes_otherwise(self):
+        """Positive periods roll once per period; zero, negative, and non-finite pin bucket 0."""
+        for frozen_period in (0.0, -5.0, float("nan"), float("inf")):
+            self.assertEqual(SharedProcessCache.time_bucket(frozen_period), 0)
+        before = SharedProcessCache.time_bucket(0.01)
+        time.sleep(0.03)
+        self.assertGreater(SharedProcessCache.time_bucket(0.01), before)
