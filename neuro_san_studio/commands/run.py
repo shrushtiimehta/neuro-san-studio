@@ -79,7 +79,7 @@ class NeuroSanRunner:
             "manifest_update_period_seconds": int(os.getenv("AGENT_MANIFEST_UPDATE_PERIOD_SECONDS", "5")),
             # "spawn" is not the fastest, but the safest and most available on all OSes.
             # See comment on the env var in the Dockerfile for more info.
-            "manifest_concurrency_context": int(os.getenv("AGENT_MANIFEST_CONCURRENCY_CONTEXT", "spawn")),
+            "manifest_concurrency_context": os.getenv("AGENT_MANIFEST_CONCURRENCY_CONTEXT", "spawn"),
             "default_sly_data": str(os.getenv("DEFAULT_SLY_DATA", "")),
             "nsflow_host": os.getenv("NSFLOW_HOST", "localhost"),
             "nsflow_port": int(os.getenv("NSFLOW_PORT", "4173")),
