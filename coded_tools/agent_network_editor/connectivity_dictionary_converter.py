@@ -108,7 +108,8 @@ class ConnectivityDictionaryConverter(DictionaryConverter):
         Get the process-wide ToolboxFactory, creating and load()-ing it on
         the first call in the process: that one cold load (file I/O + HOCON
         parse) runs off the event loop, shared by concurrent cold callers;
-        warm calls return via the lock-free peek without awaiting.
+        warm calls resolve via the lock-free peek without suspending the
+        caller (the await completes immediately).
 
         This is the accessor call sites should use — hand-rolling the
         peek-then-to_thread dance per caller is how a caller forgets the

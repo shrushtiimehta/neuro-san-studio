@@ -157,9 +157,10 @@ class SharedProcessCache(Generic[CachedValue]):
 
     async def aget(self) -> CachedValue:
         """
-        Async get(): warm reads return via the lock-free peek with no
-        awaiting at all; a cold load runs in a worker thread, shared by every
-        concurrent cold caller on this event loop.
+        Async get(): warm reads resolve via the lock-free peek without
+        suspending the caller (the await completes immediately); a cold load
+        runs in a worker thread, shared by every concurrent cold caller on
+        this event loop.
 
         :return: The cached or freshly loaded value. Loader exceptions
                 propagate to every caller awaiting that load, and the next
