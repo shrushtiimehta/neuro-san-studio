@@ -66,6 +66,7 @@ function run() {
     #   Slurp in the rest as environment variables, all of which are optional.
 
     docker_cmd="docker run --rm -it \
+        --ulimit nofile=100000:100000 \
         --name=$SERVICE_NAME \
         --network=$network \
         -e OPENAI_API_KEY \
