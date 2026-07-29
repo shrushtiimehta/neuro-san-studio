@@ -17,6 +17,7 @@
 import asyncio
 import logging
 import os
+from functools import partial
 from time import monotonic
 from typing import Any
 
@@ -31,9 +32,7 @@ from neuro_san.internals.graph.persistence.served_manifest_config_filter import 
 from pyparsing.exceptions import ParseException
 
 from coded_tools.agent_network_editor.and_logger import AndLogger
-from coded_tools.agent_network_editor.constants import SUBNETWORKS
 from coded_tools.agent_network_editor.shared_process_cache import SharedProcessCache
-from coded_tools.agent_network_editor.sly_data_lock import SlyDataLock
 
 DEFAULT_MANIFEST_FILE = os.path.join("registries", "manifest_and.hocon")
 
@@ -51,7 +50,10 @@ class GetSubnetwork(BranchActivation, CodedTool):
     subnetwork — the same routing mechanism `CallAgent` uses to invoke other agents.
     The framework picks direct (in-process) or http (loopback) under the hood, so this
     works uniformly in both deployment modes without needing to reach the server's
-    internal `AgentNetworkStorage` directly.
+    internal `AgentNetworkStorage` directly. The fetched mapping is published to a
+    process-wide cache (see _shared_subnetwork_descriptions_cache below), so the
+    per-subnetwork fan-out runs once per refresh period rather than once per editor
+    invocation.
 
     The static helper `get_subnetwork_names()` is preserved for callers that do not
     have access to a run_context (e.g. middleware classes).
@@ -230,6 +232,33 @@ class GetSubnetwork(BranchActivation, CodedTool):
         """
         GetSubnetwork._shared_subnetwork_names_cache.clear_for_testing()
 
+    # Process-wide cache of the {/<network_name>: front-man description}
+    # mapping shown to the designer LLM. Previously cached per sly_data
+    # scope, which does not survive across editor invocations — so every
+    # user request re-fetched every description: one session.function({})
+    # call per subnetwork which, in http mode, is a loopback round trip
+    # processed by the same event loop that is serving the request.
+    # Constructed WITHOUT a loader: the fetch needs the framework session
+    # factory, which only a live run_context can reach, so get_subnetworks()
+    # fills the cache in-context via aget_or_fill(). Shares
+    # _manifest_fingerprint with the names cache above so names and
+    # descriptions go stale and refresh together — descriptions live in each
+    # subnetwork's own hocon, which a manifest probe cannot see, and the
+    # manifest-update-period bucket bounds that staleness at the same cadence
+    # at which the server itself picks up registry changes.
+    _shared_subnetwork_descriptions_cache: SharedProcessCache[dict[str, str]] = SharedProcessCache(
+        fingerprint=_manifest_fingerprint
+    )
+
+    @classmethod
+    def clear_shared_subnetwork_descriptions_for_testing(cls):
+        """
+        Reset the process-wide subnetwork-descriptions cache. For test
+        isolation only — see clear_shared_subnetwork_names_for_testing();
+        the same reasoning applies here.
+        """
+        GetSubnetwork._shared_subnetwork_descriptions_cache.clear_for_testing()
+
     @staticmethod
     async def get_subnetwork_names() -> list[str]:
         """
@@ -249,56 +278,75 @@ class GetSubnetwork(BranchActivation, CodedTool):
         """
         return list(await GetSubnetwork._shared_subnetwork_names_cache.aget())
 
-    async def get_subnetworks(self, sly_data: dict[str, Any]) -> dict[str, Any]:
+    async def get_subnetworks(self) -> dict[str, str]:
         """
         Return the {/<name>: front-man-description} mapping shown to the designer LLM.
 
-        For each name from the designer manifest, we open an `AsyncAgentSession` to that
-        agent and call its `function({})` endpoint to get the front-man's function spec
-        (the same JSON-schema-ish structure the LLM sees when wiring tools). The session
-        is created via `invocation_context.get_async_session_factory().create_session()`
-        — the same hook `CallAgent` uses, and the framework decides whether to dispatch
-        in-process (direct mode) or via loopback HTTP (server mode) based on the factory's
-        `use_direct` setting.
+        Served from the process-wide descriptions cache when warm. On a miss, this
+        invocation fills it: for each name from the designer manifest, we open an
+        `AsyncAgentSession` to that agent and call its `function({})` endpoint to get
+        the front-man's function spec (the same JSON-schema-ish structure the LLM sees
+        when wiring tools). The session is created via
+        `invocation_context.get_async_session_factory().create_session()` — the same
+        hook `CallAgent` uses, and the framework decides whether to dispatch
+        in-process (direct mode) or via loopback HTTP (server mode) based on the
+        factory's `use_direct` setting. Caching the result process-wide is what keeps
+        that fan-out — one `function` call per subnetwork, per editor invocation, i.e.
+        per user request — off the server's event loop in http mode.
 
-        :param sly_data: sly_data dict; result is cached at `sly_data[SUBNETWORKS]` and a
-                `SlyDataLock` named "subnetworks_lock" is held during the load.
         :return: dict mapping "/<network_name>" -> front-man's function.description.
                 Networks that fail to respond, return no front man, or have an empty
                 description are still included with an empty-string value so the LLM
                 at least sees the name. May be an empty dict if no names or no
-                run_context.
+                run_context. The returned dict is a copy, so callers may mutate it
+                without corrupting the shared cache.
         """
-        # Lock per-sly_data so two concurrent intra-session callers don't both do the work
-        # (e.g. when a parent tool fans out via asyncio.gather and several writers each
-        # transitively reach get_subnetwork).
-        async with await SlyDataLock.get_lock(sly_data, "subnetworks_lock"):
-            # Per-session cache hit (including an explicitly cached empty mapping).
-            if SUBNETWORKS in sly_data:
-                return sly_data[SUBNETWORKS]
+        cached: dict[str, str] | None = GetSubnetwork._shared_subnetwork_descriptions_cache.peek()
+        if cached is not None:
+            return dict(cached)
 
-            # Get the curated subset of names from the designer manifest.
-            # Cheap: served from the process-wide cache.
-            names: list[str] = await self.get_subnetwork_names()
-            if not names:
-                sly_data[SUBNETWORKS] = {}
-                return {}
+        # Resolve the session factory BEFORE entering the shared fill.
+        # `run_context` is injected by BranchActivation.__init__; if this CodedTool is
+        # ever instantiated outside that flow (e.g. tests bypassing __init__), the chain
+        # raises AttributeError and this call degrades to a per-call empty dict —
+        # crucially WITHOUT publishing that emptiness into the process-wide cache,
+        # where it would blank out every other conversation's view of the available
+        # subnetworks for up to a full refresh period.
+        try:
+            invocation_context = self.run_context.get_invocation_context()
+            factory = invocation_context.get_async_session_factory()
+        except AttributeError:
+            logger.warning("No invocation context / session factory available; returning empty subnetworks.")
+            return {}
 
-            # Reach the framework's session factory through run_context.
-            # `run_context` is injected by BranchActivation.__init__; if this CodedTool is
-            # ever instantiated outside that flow (e.g. tests bypassing __init__), the chain
-            # raises AttributeError and we return an empty dict rather than crashing.
-            try:
-                invocation_context = self.run_context.get_invocation_context()
-                factory = invocation_context.get_async_session_factory()
-            except AttributeError:
-                logger.warning("No invocation context / session factory available; returning empty subnetworks.")
-                sly_data[SUBNETWORKS] = {}
-                return {}
+        filler = partial(GetSubnetwork._fill_subnetwork_descriptions, factory, invocation_context)
+        subnetworks: dict[str, str] = await GetSubnetwork._shared_subnetwork_descriptions_cache.aget_or_fill(filler)
+        return dict(subnetworks)
 
-            subnetworks: dict[str, str] = await self._collect_via_sessions(names, factory, invocation_context)
-            sly_data[SUBNETWORKS] = subnetworks
-            return subnetworks
+    @staticmethod
+    async def _fill_subnetwork_descriptions(factory: Any, invocation_context: Any) -> dict[str, str]:
+        """
+        Filler for the shared descriptions cache: builds the complete mapping on
+        the event loop inside SharedProcessCache.aget_or_fill(), once per refresh
+        period, shared by every concurrent cold caller on the loop.
+
+        Whichever invocation reaches the cold cache first supplies the factory and
+        invocation_context the fill runs under; invocations are interchangeable for
+        this purpose because every factory routes `function({})` to the same server
+        state.
+
+        :param factory: The `AsyncAgentSessionFactory` of the filling invocation.
+        :param invocation_context: That invocation's `InvocationContext`.
+        :return: dict mapping "/<network_name>" -> description. An empty mapping
+                (no names in the manifest) IS returned, and therefore published:
+                like the names cache, this entry self-expires via the shared
+                fingerprint, so emptiness lasts at most one refresh period — and
+                publishing it prevents a per-call fetch storm within one.
+        """
+        names: list[str] = await GetSubnetwork.get_subnetwork_names()
+        if not names:
+            return {}
+        return await GetSubnetwork._collect_via_sessions(names, factory, invocation_context)
 
     @staticmethod
     async def _collect_via_sessions(
@@ -341,7 +389,8 @@ class GetSubnetwork(BranchActivation, CodedTool):
         # Keep every name in the result, even when the description came back empty —
         # the LLM at least gets visibility into the available subnetwork names and can
         # still wire them if it knows what they do. Empty-description entries are
-        # cached too, so we don't keep retrying within the session.
+        # cached too, so a broken network is not refetched on every call; it gets
+        # another chance when the shared entry expires at the next refresh period.
         subnetworks: dict[str, str] = {}
         for name, desc in results:
             subnetworks[name] = desc
@@ -427,4 +476,4 @@ class GetSubnetwork(BranchActivation, CodedTool):
             otherwise:
                 an empty dictionary.
         """
-        return await self.get_subnetworks(sly_data)
+        return await self.get_subnetworks()

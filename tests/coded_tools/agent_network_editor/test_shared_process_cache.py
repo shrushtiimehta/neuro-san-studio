@@ -175,6 +175,120 @@ class TestSharedProcessCache(TestCase):
             self.assertEqual(asyncio.run(cache.aget()), "value")
         self.assertEqual(len(cache._loads_in_flight), 0)  # pylint: disable=protected-access
 
+    def test_get_raises_on_a_miss_without_a_loader(self):
+        """A loaderless cache raises on a get() miss but serves warm reads."""
+
+        async def filler() -> str:
+            return "filled"
+
+        cache: SharedProcessCache[str] = SharedProcessCache()
+        with self.assertRaises(RuntimeError):
+            cache.get()
+        self.assertEqual(asyncio.run(cache.aget_or_fill(filler)), "filled")
+        self.assertEqual(cache.get(), "filled")
+
+    def test_aget_or_fill_shares_one_fill_and_serves_warm_reads(self):
+        """Concurrent cold aget_or_fill() callers share a single filler run."""
+        calls = {"count": 0}
+
+        async def filler() -> str:
+            calls["count"] += 1
+            await asyncio.sleep(0.05)
+            return "filled"
+
+        cache: SharedProcessCache[str] = SharedProcessCache()
+
+        async def run() -> list[str]:
+            burst = await asyncio.gather(*[cache.aget_or_fill(filler) for _ in range(20)])
+            warm = await cache.aget_or_fill(filler)
+            return burst + [warm]
+
+        self.assertEqual(asyncio.run(run()), ["filled"] * 21)
+        self.assertEqual(calls["count"], 1)
+
+    def test_aget_or_fill_failure_is_shared_and_next_call_retries(self):
+        """A failing shared fill raises for all awaiters; the next call retries."""
+        attempts = {"count": 0}
+
+        async def filler() -> str:
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                raise RuntimeError("boom")
+            return "healed"
+
+        cache: SharedProcessCache[str] = SharedProcessCache()
+
+        async def run() -> str:
+            results = await asyncio.gather(*[cache.aget_or_fill(filler) for _ in range(3)], return_exceptions=True)
+            self.assertTrue(all(isinstance(result, RuntimeError) for result in results))
+            # Nothing was published, so the failure is not served warm.
+            self.assertIsNone(cache.peek())
+            return await cache.aget_or_fill(filler)
+
+        self.assertEqual(asyncio.run(run()), "healed")
+        self.assertEqual(attempts["count"], 2)
+
+    def test_aget_or_fill_respects_fingerprint_freshness(self):
+        """A fingerprint change turns warm aget_or_fill() reads into a refill."""
+        source = {"fingerprint": 1, "fills": 0}
+
+        async def filler() -> str:
+            source["fills"] += 1
+            return f"value-{source['fingerprint']}"
+
+        cache: SharedProcessCache[str] = SharedProcessCache(fingerprint=lambda: source["fingerprint"])
+
+        async def run() -> tuple[str, str, str]:
+            first = await cache.aget_or_fill(filler)
+            second = await cache.aget_or_fill(filler)
+            source["fingerprint"] = 2
+            third = await cache.aget_or_fill(filler)
+            return first, second, third
+
+        self.assertEqual(asyncio.run(run()), ("value-1", "value-1", "value-2"))
+        self.assertEqual(source["fills"], 2)
+
+    def test_aget_or_fill_captures_fingerprint_before_the_filler_runs(self):
+        """A mid-fill source change leaves the published entry stale."""
+        # The async twin of test_fingerprint_is_captured_before_the_loader_runs:
+        # if the source changes while the filler runs, the published entry must
+        # already be stale so the next read rebuilds it.
+        source = {"fingerprint": 1}
+
+        async def filler() -> str:
+            source["fingerprint"] = 2
+            return "torn"
+
+        cache: SharedProcessCache[str] = SharedProcessCache(fingerprint=lambda: source["fingerprint"])
+        self.assertEqual(asyncio.run(cache.aget_or_fill(filler)), "torn")
+        self.assertIsNone(cache.peek())
+
+    def test_aget_or_fill_survives_one_awaiter_being_cancelled(self):
+        """Cancelling one aget_or_fill() awaiter must not cancel the shared fill."""
+        calls = {"count": 0}
+
+        async def run() -> str:
+            release = asyncio.Event()
+
+            async def filler() -> str:
+                calls["count"] += 1
+                await release.wait()
+                return "survived"
+
+            cache: SharedProcessCache[str] = SharedProcessCache()
+            first = asyncio.create_task(cache.aget_or_fill(filler))
+            second = asyncio.create_task(cache.aget_or_fill(filler))
+            # One tick so both awaiters reach the shared fill task.
+            await asyncio.sleep(0)
+            first.cancel()
+            release.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await first
+            return await second
+
+        self.assertEqual(asyncio.run(run()), "survived")
+        self.assertEqual(calls["count"], 1)
+
     def test_clear_for_testing_drops_entry_and_pending_loads(self):
         """clear_for_testing() drops the entry AND forgets pending loads."""
         calls = {"count": 0}

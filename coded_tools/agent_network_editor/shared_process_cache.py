@@ -31,6 +31,7 @@ from asyncio import shield
 from asyncio import to_thread
 from threading import Lock
 from typing import Any
+from typing import Awaitable
 from typing import Callable
 from typing import Generic
 from typing import TypeVar
@@ -44,13 +45,17 @@ class SharedProcessCache(Generic[CachedValue]):
     Process-wide cache of a single expensive value, safe across threads and
     event loops.
 
-    * loader: synchronous callable producing the value. It runs under the
-      cache lock — and in a worker thread when reached through aget() — so it
-      may do blocking file I/O and CPU-heavy parsing. It must either return a
-      complete, ready-to-share value or raise; on a raise nothing is
-      published, so the next call retries instead of serving a half-built or
-      failure value. Loaders must not return None (return an empty container
-      instead) — None is the cache's "not loaded" sentinel.
+    * loader: optional synchronous callable producing the value. It runs
+      under the cache lock — and in a worker thread when reached through
+      aget() — so it may do blocking file I/O and CPU-heavy parsing. It must
+      either return a complete, ready-to-share value or raise; on a raise
+      nothing is published, so the next call retries instead of serving a
+      half-built or failure value. Loaders must not return None (return an
+      empty container instead) — None is the cache's "not loaded" sentinel.
+      When the value can only be built from context that exists at the call
+      site (e.g. a request-scoped session factory that no standalone loader
+      could reach), construct the cache without a loader and fill it through
+      aget_or_fill() instead; get() and aget() then raise on a miss.
     * fingerprint: optional cheap callable identifying the version of the
       source the value was built from (e.g. a (path, mtime) tuple, which can
       also fold in a time bucket for TTL-style expiry). It is captured just
@@ -74,14 +79,25 @@ class SharedProcessCache(Generic[CachedValue]):
       burst cannot fill the loop's default executor with lock-waiters. The
       await is shield()-ed, so one cancelled caller cannot cancel the shared
       load out from under the others.
+    * aget_or_fill() applies the same discipline to values built by an async
+      callable ON the event loop: same once-gate, same capture-fingerprint-
+      before-building, same publish-only-on-success. Because a threading.Lock
+      cannot be held across an await, its miss double-check is lock-free and
+      only the publish takes the lock — so two loops can race to fill, which
+      is benign: each publishes a complete value under an equally current
+      fingerprint, and the race costs one duplicate build. Do not combine it
+      with a blocking loader on the same instance: get() holds the lock for
+      the whole load, and aget_or_fill()'s publish would then block its
+      event loop waiting for that lock.
     """
 
-    def __init__(self, loader: Callable[[], CachedValue], fingerprint: Callable[[], Any] | None = None):
+    def __init__(self, loader: Callable[[], CachedValue] | None = None, fingerprint: Callable[[], Any] | None = None):
         """
         Constructor
 
-        :param loader: Synchronous callable that builds the value. See the
-                class docstring for its contract.
+        :param loader: Optional synchronous callable that builds the value.
+                See the class docstring for its contract; omit it for caches
+                filled at the call site via aget_or_fill().
         :param fingerprint: Optional source-version probe. See the class
                 docstring for its contract.
         """
@@ -130,7 +146,9 @@ class SharedProcessCache(Generic[CachedValue]):
 
         :return: The cached or freshly loaded value. Loader exceptions
                 propagate without publishing anything, so the next call
-                retries.
+                retries. A miss on a cache constructed without a loader
+                raises RuntimeError — such a cache is filled at the call
+                site via aget_or_fill().
         """
         value: CachedValue | None = self.peek()
         if value is not None:
@@ -145,6 +163,12 @@ class SharedProcessCache(Generic[CachedValue]):
             entry: tuple[CachedValue, Any] | None = self._entry
             if entry is not None and (self._fingerprint is None or entry[1] == current_fingerprint):
                 return entry[0]
+
+            if self._loader is None:
+                raise RuntimeError(
+                    "SharedProcessCache miss on a cache with no loader; "
+                    "this cache can only be filled via aget_or_fill()."
+                )
 
             # The fingerprint was captured BEFORE loading: if the source
             # changes while the loader runs, the next read's probe mismatches
@@ -170,12 +194,55 @@ class SharedProcessCache(Generic[CachedValue]):
         if value is not None:
             return value
 
+        return await self._await_shared_load(lambda: to_thread(self.get))
+
+    async def aget_or_fill(self, filler: Callable[[], Awaitable[CachedValue]]) -> CachedValue:
+        """
+        aget() for caches whose value can only be built from context that
+        exists at the call site (e.g. a request-scoped session factory no
+        standalone loader could reach): warm reads resolve via the lock-free
+        peek without suspending the caller (the await completes immediately);
+        on a miss, ONE caller's filler runs on this event loop and every
+        concurrent cold caller on the loop awaits that shared fill.
+
+        Because whichever caller arrives first supplies the filler that
+        actually runs, all callers' fillers must build the same value —
+        differing only in the call-site context they carry. The filler
+        follows the loader contract: return a complete, ready-to-share value
+        or raise (nothing is published on a raise, so the next call
+        retries), and never return None. It runs ON the event loop, so it
+        should await network-style I/O; blocking file I/O or heavy parsing
+        belongs in a loader reached through aget() instead.
+
+        :param filler: Async callable that builds the value.
+        :return: The cached or freshly filled value. Filler exceptions
+                propagate to every caller awaiting that fill, and the next
+                call starts a fresh attempt.
+        """
+        value: CachedValue | None = self.peek()
+        if value is not None:
+            return value
+
+        return await self._await_shared_load(lambda: self._fill_and_publish(filler))
+
+    async def _await_shared_load(self, start_load: Callable[[], Awaitable[CachedValue]]) -> CachedValue:
+        """
+        The per-event-loop once-gate shared by aget() and aget_or_fill():
+        adopt this loop's in-flight load task if one is pending, otherwise
+        start a new one from start_load.
+
+        :param start_load: Zero-arg callable producing the awaitable that
+                performs the load; only invoked when a new task is needed,
+                so no coroutine is created (and left unawaited) on the
+                adopt path.
+        :return: The loaded value, once the shared task completes.
+        """
         loop = get_running_loop()
         task: Task | None = self._loads_in_flight.get(loop)
         if task is None or task.done():
             # A done task is a finished earlier attempt (possibly failed or
             # stale); start a new one. Awaiters of the old task are unaffected.
-            task = loop.create_task(to_thread(self.get))
+            task = loop.create_task(start_load())
             self._loads_in_flight[loop] = task
             task.add_done_callback(self._forget_in_flight_load)
         # shield() detaches awaiter cancellation from the shared task: a
@@ -184,6 +251,33 @@ class SharedProcessCache(Generic[CachedValue]):
         # here would let one cancelled caller cancel everyone else's load,
         # because Task.cancel() propagates into whatever the task is awaiting.
         return await shield(task)
+
+    async def _fill_and_publish(self, filler: Callable[[], Awaitable[CachedValue]]) -> CachedValue:
+        """
+        Body of an aget_or_fill() once-gate task: get()'s miss discipline,
+        restated for a build that happens on the event loop.
+
+        The fingerprint is probed once per miss — serving both as the
+        double-check against a fill that completed while this task was being
+        scheduled and as the freshness capture published with the value —
+        and it is captured BEFORE the filler runs, so a source change
+        mid-fill leaves the published entry already stale rather than a torn
+        read living forever. Unlike get(), the build runs outside the lock
+        (a threading.Lock cannot be held across an await), so the
+        double-check is advisory across loops/threads; see the class
+        docstring for why that race is benign.
+        """
+        current_fingerprint: Any = self._fingerprint() if self._fingerprint is not None else None
+        entry: tuple[CachedValue, Any] | None = self._entry
+        if entry is not None and (self._fingerprint is None or entry[1] == current_fingerprint):
+            return entry[0]
+
+        value: CachedValue = await filler()
+        # Publish only after the filler fully succeeded, under the lock so
+        # the swap serializes with get()'s publish and clear_for_testing().
+        with self._lock:
+            self._entry = (value, current_fingerprint)
+        return value
 
     def _forget_in_flight_load(self, task: Task):
         """
