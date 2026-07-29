@@ -94,7 +94,12 @@ class ProcessGlobals:  # pylint: disable=too-few-public-methods
     #             no loader: descriptions can only be fetched through a live
     #             run_context's session factory, so the first
     #             get_subnetworks() call of each refresh period fills the
-    #             cache in-context (SharedProcessCache.aget_or_fill).
+    #             cache in-context (SharedProcessCache.aget_or_fill). A fill
+    #             whose fetches ALL failed raises instead of publishing —
+    #             that failure's recovery is invisible to the fingerprint —
+    #             and the cache is bypassed entirely when AGENT_AUTHORIZER
+    #             is set, because /function responses are then
+    #             caller-specific (see _shared_descriptions_cache_enabled).
     #    Used by: GetSubnetwork.get_subnetworks() (the coded tool path).
     # -----------------------------------------------------------------------
 

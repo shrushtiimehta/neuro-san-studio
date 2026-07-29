@@ -187,6 +187,55 @@ class TestSharedProcessCache(TestCase):
         self.assertEqual(asyncio.run(cache.aget_or_fill(filler)), "filled")
         self.assertEqual(cache.get(), "filled")
 
+    def test_aget_raises_on_a_miss_without_a_loader(self):
+        """aget() rejects a loaderless miss without seeding the once-gate."""
+        cache: SharedProcessCache[str] = SharedProcessCache()
+
+        async def filler() -> str:
+            return "filled"
+
+        async def run() -> str:
+            with self.assertRaises(RuntimeError):
+                await cache.aget()
+            # The rejected aget() must not have left a doomed task behind
+            # for aget_or_fill() to adopt.
+            return await cache.aget_or_fill(filler)
+
+        self.assertEqual(asyncio.run(run()), "filled")
+
+    def test_aget_or_fill_raises_when_a_loader_is_configured(self):
+        """aget_or_fill() rejects a miss on a loader-backed cache."""
+        cache: SharedProcessCache[str] = SharedProcessCache(loader=lambda: "loaded")
+
+        async def filler() -> str:
+            return "filled"
+
+        async def run() -> None:
+            with self.assertRaises(RuntimeError):
+                await cache.aget_or_fill(filler)
+
+        asyncio.run(run())
+        # The loader path is unaffected by the rejected call.
+        self.assertEqual(cache.get(), "loaded")
+
+    def test_aget_or_fill_does_not_clobber_a_fresher_entry(self):
+        """A fill whose capture went stale must not overwrite a racer's fresher entry."""
+        source = {"fingerprint": 1}
+        cache: SharedProcessCache[str] = SharedProcessCache(fingerprint=lambda: source["fingerprint"])
+
+        async def slow_filler() -> str:
+            # Stand-in for a faster fill on ANOTHER event loop finishing
+            # first: the source rolls mid-build and the racer publishes a
+            # value that is current under the new fingerprint.
+            source["fingerprint"] = 2
+            cache._entry = ("fresh", 2)  # pylint: disable=protected-access
+            return "stale"
+
+        # This fill's own awaiter still receives its value...
+        self.assertEqual(asyncio.run(cache.aget_or_fill(slow_filler)), "stale")
+        # ...but the racer's fresher entry survives the publish.
+        self.assertEqual(cache.peek(), "fresh")
+
     def test_aget_or_fill_shares_one_fill_and_serves_warm_reads(self):
         """Concurrent cold aget_or_fill() callers share a single filler run."""
         calls = {"count": 0}

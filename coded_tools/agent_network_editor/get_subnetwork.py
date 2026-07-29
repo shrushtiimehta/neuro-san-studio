@@ -246,6 +246,8 @@ class GetSubnetwork(BranchActivation, CodedTool):
     # subnetwork's own hocon, which a manifest probe cannot see, and the
     # manifest-update-period bucket bounds that staleness at the same cadence
     # at which the server itself picks up registry changes.
+    # Not consulted at all when AGENT_AUTHORIZER is set — see
+    # _shared_descriptions_cache_enabled below.
     _shared_subnetwork_descriptions_cache: SharedProcessCache[dict[str, str]] = SharedProcessCache(
         fingerprint=_manifest_fingerprint
     )
@@ -258,6 +260,23 @@ class GetSubnetwork(BranchActivation, CodedTool):
         the same reasoning applies here.
         """
         GetSubnetwork._shared_subnetwork_descriptions_cache.clear_for_testing()
+
+    @staticmethod
+    def _shared_descriptions_cache_enabled() -> bool:
+        """
+        :return: True when descriptions may be shared process-wide. With an
+                AGENT_AUTHORIZER configured (non-empty env var; empty is the
+                server's allow-all default), the /function endpoint is
+                authorization-gated per caller identity — the metadata each
+                request forwards decides which networks answer and which
+                return 403 — so a mapping fetched under one user's identity
+                must not be served to other users: whichever user won the
+                cold race would blank out, or expose, networks according to
+                THEIR permissions for everyone. get_subnetworks() then skips
+                the shared cache and fetches once per invocation, the
+                pre-cache behavior.
+        """
+        return not os.getenv("AGENT_AUTHORIZER")
 
     @staticmethod
     async def get_subnetwork_names() -> list[str]:
@@ -297,30 +316,55 @@ class GetSubnetwork(BranchActivation, CodedTool):
         :return: dict mapping "/<network_name>" -> front-man's function.description.
                 Networks that fail to respond, return no front man, or have an empty
                 description are still included with an empty-string value so the LLM
-                at least sees the name. May be an empty dict if no names or no
-                run_context. The returned dict is a copy, so callers may mutate it
-                without corrupting the shared cache.
+                at least sees the name — unless EVERY description came back empty,
+                the signature of a fetch outage, in which case nothing is published
+                and this call returns an empty dict (the next call retries). Also an
+                empty dict if no names or no run_context. The returned dict is a
+                copy, so callers may mutate it without corrupting the shared cache.
         """
-        cached: dict[str, str] | None = GetSubnetwork._shared_subnetwork_descriptions_cache.peek()
-        if cached is not None:
-            return dict(cached)
+        use_shared_cache: bool = GetSubnetwork._shared_descriptions_cache_enabled()
+        if use_shared_cache:
+            # Besides skipping the factory resolution below on warm calls,
+            # this peek is what serves warm reads to callers WITHOUT a
+            # run_context (e.g. tests instantiating the tool directly): such
+            # callers degrade to an empty dict only when the cache is
+            # actually cold. aget_or_fill() peeks again on the miss path;
+            # that duplication is deliberate.
+            cached: dict[str, str] | None = GetSubnetwork._shared_subnetwork_descriptions_cache.peek()
+            if cached is not None:
+                return dict(cached)
 
         # Resolve the session factory BEFORE entering the shared fill.
         # `run_context` is injected by BranchActivation.__init__; if this CodedTool is
-        # ever instantiated outside that flow (e.g. tests bypassing __init__), the chain
-        # raises AttributeError and this call degrades to a per-call empty dict —
-        # crucially WITHOUT publishing that emptiness into the process-wide cache,
-        # where it would blank out every other conversation's view of the available
-        # subnetworks for up to a full refresh period.
-        try:
-            invocation_context = self.run_context.get_invocation_context()
-            factory = invocation_context.get_async_session_factory()
-        except AttributeError:
+        # ever instantiated outside that flow (e.g. tests bypassing __init__), this
+        # call degrades to a per-call empty dict — crucially WITHOUT publishing that
+        # emptiness into the process-wide cache, where it would blank out every other
+        # conversation's view of the available subnetworks. None-checks rather than a
+        # broad `except AttributeError`, which would also mask a genuine
+        # AttributeError raised INSIDE the neuro-san accessors (e.g. version skew).
+        run_context = getattr(self, "run_context", None)
+        invocation_context = run_context.get_invocation_context() if run_context is not None else None
+        factory = invocation_context.get_async_session_factory() if invocation_context is not None else None
+        if factory is None:
             logger.warning("No invocation context / session factory available; returning empty subnetworks.")
             return {}
 
         filler = partial(GetSubnetwork._fill_subnetwork_descriptions, factory, invocation_context)
-        subnetworks: dict[str, str] = await GetSubnetwork._shared_subnetwork_descriptions_cache.aget_or_fill(filler)
+        try:
+            if use_shared_cache:
+                subnetworks: dict[str, str] = await GetSubnetwork._shared_subnetwork_descriptions_cache.aget_or_fill(
+                    filler
+                )
+            else:
+                # An authorizer is configured: descriptions are caller-specific,
+                # so fetch under this invocation's own identity every time.
+                subnetworks = await filler()
+        except RuntimeError as error:
+            # The filler refused to build a publishable mapping (every fetch
+            # failed). Degrade to an empty dict for THIS call only — nothing
+            # was published, so the next call retries immediately.
+            logger.warning("Subnetwork description fetch failed; returning empty subnetworks for this call: %s", error)
+            return {}
         return dict(subnetworks)
 
     @staticmethod
@@ -338,15 +382,28 @@ class GetSubnetwork(BranchActivation, CodedTool):
         :param factory: The `AsyncAgentSessionFactory` of the filling invocation.
         :param invocation_context: That invocation's `InvocationContext`.
         :return: dict mapping "/<network_name>" -> description. An empty mapping
-                (no names in the manifest) IS returned, and therefore published:
-                like the names cache, this entry self-expires via the shared
-                fingerprint, so emptiness lasts at most one refresh period — and
-                publishing it prevents a per-call fetch storm within one.
+                from an empty manifest IS returned, and therefore published: like
+                the names cache, it heals when the fingerprint changes — and the
+                manifest fix that emptiness calls for is itself an mtime change
+                the fingerprint sees.
+        :raises RuntimeError: when names exist but EVERY description fetch came
+                back empty — the signature of a fetch outage, whose recovery
+                changes nothing the fingerprint observes. Publishing it would
+                blank every conversation's view, on a static server (manifest
+                update period <= 0, manifest never rewritten) until the process
+                restarts. Same failure shape, same remedy as the toolbox loader's
+                empty-mapping guard: raise so nothing is published and the next
+                call retries.
         """
         names: list[str] = await GetSubnetwork.get_subnetwork_names()
         if not names:
             return {}
-        return await GetSubnetwork._collect_via_sessions(names, factory, invocation_context)
+        descriptions: dict[str, str] = await GetSubnetwork._collect_via_sessions(names, factory, invocation_context)
+        if descriptions and not any(descriptions.values()):
+            raise RuntimeError(
+                f"all {len(descriptions)} subnetwork description fetches came back empty; treating as a failed load"
+            )
+        return descriptions
 
     @staticmethod
     async def _collect_via_sessions(
@@ -388,9 +445,11 @@ class GetSubnetwork(BranchActivation, CodedTool):
 
         # Keep every name in the result, even when the description came back empty —
         # the LLM at least gets visibility into the available subnetwork names and can
-        # still wire them if it knows what they do. Empty-description entries are
-        # cached too, so a broken network is not refetched on every call; it gets
-        # another chance when the shared entry expires at the next refresh period.
+        # still wire them if it knows what they do. A few empty entries ride along in
+        # the published mapping (a network may legitimately have no description) and
+        # refresh only when the fingerprint changes; the pathological case — EVERY
+        # description empty, the signature of a fetch outage — is rejected by the
+        # filler before anything is published.
         subnetworks: dict[str, str] = {}
         for name, desc in results:
             subnetworks[name] = desc

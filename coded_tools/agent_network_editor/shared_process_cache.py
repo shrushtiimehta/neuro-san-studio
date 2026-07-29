@@ -83,12 +83,21 @@ class SharedProcessCache(Generic[CachedValue]):
       callable ON the event loop: same once-gate, same capture-fingerprint-
       before-building, same publish-only-on-success. Because a threading.Lock
       cannot be held across an await, its miss double-check is lock-free and
-      only the publish takes the lock — so two loops can race to fill, which
-      is benign: each publishes a complete value under an equally current
-      fingerprint, and the race costs one duplicate build. Do not combine it
-      with a blocking loader on the same instance: get() holds the lock for
-      the whole load, and aget_or_fill()'s publish would then block its
-      event loop waiting for that lock.
+      only the publish takes the lock. The once-gate deduplicates per event
+      loop only, and the server hands each concurrent session its own loop —
+      so a cold burst can run one fill per session loop. (The loader path
+      does not duplicate work this way: get()'s lock makes cross-loop loser
+      threads wait and then serve the winner's published entry, while async
+      fills have no cross-loop serialization.) A publish-time fingerprint
+      re-probe in _fill_and_publish keeps a slower fill whose capture went
+      stale from clobbering a fresher racer's entry.
+    * A cache is either loader-backed (get()/aget()) or call-site-filled
+      (aget_or_fill()), never both; the wrong entry point raises RuntimeError
+      on a miss. Beyond keeping each instance's read surface predictable,
+      this guards two concrete hazards: an aget() task on a loaderless cache
+      would sit doomed in the once-gate slot for an aget_or_fill() caller to
+      adopt, and a fill's publish on the event loop would block behind get()
+      holding the lock across a whole blocking load in a worker thread.
     """
 
     def __init__(self, loader: Callable[[], CachedValue] | None = None, fingerprint: Callable[[], Any] | None = None):
@@ -135,6 +144,31 @@ class SharedProcessCache(Generic[CachedValue]):
             return None
         return value
 
+    def _probe_fresh(self) -> tuple[Any, CachedValue | None]:
+        """
+        The one copy of the per-miss freshness discipline shared by get()
+        and _fill_and_publish(): probe the fingerprint exactly once and
+        report whether the stored entry is still fresh under it. The single
+        probe serves both as the double-check against a load/fill that
+        completed in the meantime and as the freshness capture published
+        with a newly built value — so a stat-style probe runs once per
+        miss, not twice.
+
+        Takes no lock itself; each caller chooses its own locking (get()
+        calls this under the cache lock, _fill_and_publish() calls it
+        lock-free — its reads are one atomic reference read of _entry plus
+        the probe, exactly like peek()).
+
+        :return: (current fingerprint, the fresh cached value or None on a
+                miss). None-as-miss is unambiguous because loaders and
+                fillers must never return None.
+        """
+        current_fingerprint: Any = self._fingerprint() if self._fingerprint is not None else None
+        entry: tuple[CachedValue, Any] | None = self._entry
+        if entry is not None and (self._fingerprint is None or entry[1] == current_fingerprint):
+            return current_fingerprint, entry[0]
+        return current_fingerprint, None
+
     def get(self) -> CachedValue:
         """
         Get the value, running the loader on a miss (first call in the
@@ -155,14 +189,11 @@ class SharedProcessCache(Generic[CachedValue]):
             return value
 
         with self._lock:
-            # Probe the fingerprint once per miss: it serves both as the
-            # double-check against a load that finished while this thread
-            # waited for the lock, and as the freshness capture stored with
-            # the value below — so a stat-style probe runs once, not twice.
-            current_fingerprint: Any = self._fingerprint() if self._fingerprint is not None else None
-            entry: tuple[CachedValue, Any] | None = self._entry
-            if entry is not None and (self._fingerprint is None or entry[1] == current_fingerprint):
-                return entry[0]
+            # Under the lock, the shared probe doubles as the check against
+            # a load that finished while this thread waited for the lock.
+            current_fingerprint, fresh = self._probe_fresh()
+            if fresh is not None:
+                return fresh
 
             if self._loader is None:
                 raise RuntimeError(
@@ -188,11 +219,21 @@ class SharedProcessCache(Generic[CachedValue]):
 
         :return: The cached or freshly loaded value. Loader exceptions
                 propagate to every caller awaiting that load, and the next
-                aget() starts a fresh attempt.
+                aget() starts a fresh attempt. A miss on a cache constructed
+                without a loader raises RuntimeError — use aget_or_fill().
         """
         value: CachedValue | None = self.peek()
         if value is not None:
             return value
+
+        if self._loader is None:
+            # Reject before creating a task: a doomed to_thread(get) task
+            # sitting in the once-gate slot could otherwise be adopted by a
+            # concurrent aget_or_fill() caller holding a perfectly valid
+            # filler, failing it for no reason.
+            raise RuntimeError(
+                "SharedProcessCache miss on a cache with no loader; this cache can only be filled via aget_or_fill()."
+            )
 
         return await self._await_shared_load(lambda: to_thread(self.get))
 
@@ -217,11 +258,19 @@ class SharedProcessCache(Generic[CachedValue]):
         :param filler: Async callable that builds the value.
         :return: The cached or freshly filled value. Filler exceptions
                 propagate to every caller awaiting that fill, and the next
-                call starts a fresh attempt.
+                call starts a fresh attempt. A miss on a cache constructed
+                WITH a loader raises RuntimeError — use get()/aget().
         """
         value: CachedValue | None = self.peek()
         if value is not None:
             return value
+
+        if self._loader is not None:
+            # See the class docstring: mixing the modes on one instance is
+            # rejected because get() holds the cache lock across a whole
+            # blocking load, and the fill's publish would take that same
+            # lock on the event loop — stalling every coroutine on it.
+            raise RuntimeError("SharedProcessCache has a loader; read it via get()/aget() instead of aget_or_fill().")
 
         return await self._await_shared_load(lambda: self._fill_and_publish(filler))
 
@@ -257,26 +306,31 @@ class SharedProcessCache(Generic[CachedValue]):
         Body of an aget_or_fill() once-gate task: get()'s miss discipline,
         restated for a build that happens on the event loop.
 
-        The fingerprint is probed once per miss — serving both as the
-        double-check against a fill that completed while this task was being
-        scheduled and as the freshness capture published with the value —
-        and it is captured BEFORE the filler runs, so a source change
+        The fingerprint is probed once per miss (the shared _probe_fresh
+        discipline) and captured BEFORE the filler runs, so a source change
         mid-fill leaves the published entry already stale rather than a torn
         read living forever. Unlike get(), the build runs outside the lock
         (a threading.Lock cannot be held across an await), so the
-        double-check is advisory across loops/threads; see the class
-        docstring for why that race is benign.
+        double-check is advisory across loops/threads — concurrent loops can
+        each run a fill; see the class docstring.
         """
-        current_fingerprint: Any = self._fingerprint() if self._fingerprint is not None else None
-        entry: tuple[CachedValue, Any] | None = self._entry
-        if entry is not None and (self._fingerprint is None or entry[1] == current_fingerprint):
-            return entry[0]
+        current_fingerprint, fresh = self._probe_fresh()
+        if fresh is not None:
+            return fresh
 
         value: CachedValue = await filler()
         # Publish only after the filler fully succeeded, under the lock so
         # the swap serializes with get()'s publish and clear_for_testing().
         with self._lock:
-            self._entry = (value, current_fingerprint)
+            # Re-probe before publishing: a faster fill on another loop may
+            # have published under a newer fingerprint while this build ran.
+            # Overwriting that fresher entry with this one — already stale,
+            # since its capture no longer matches — would force yet another
+            # rebuild on the next read. Keep the fresher entry; this fill's
+            # own awaiters still receive `value` below.
+            latest_fingerprint, still_fresh = self._probe_fresh()
+            if still_fresh is None or current_fingerprint == latest_fingerprint:
+                self._entry = (value, current_fingerprint)
         return value
 
     def _forget_in_flight_load(self, task: Task):
@@ -314,9 +368,9 @@ class SharedProcessCache(Generic[CachedValue]):
         after the clear could adopt a still-pending pre-clear load and
         receive a value built under the previous test's env/file state. The
         lock serializes this reset with a load that is mid-publish; a
-        pre-clear load that was dispatched but never awaited can still
-        publish after the reset, which tests avoid by running loads
-        sequentially.
+        pre-clear load or fill that is still running (dispatched but never
+        awaited, or kept alive by shield()) can still publish after the
+        reset, which tests avoid by running loads sequentially.
         """
         # Taking the lock serializes the reset with a concurrent load, so
         # this can never unpublish an entry mid-initialization.
