@@ -2,7 +2,6 @@
 leaf-common>=1.2.49
 neuro-san==0.6.85
 nsflow==0.6.17
-boto3>=1.43.0
 
 # For config parsing
 pyhocon>=0.3.60
