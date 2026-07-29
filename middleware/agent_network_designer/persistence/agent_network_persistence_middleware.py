@@ -14,7 +14,6 @@
 #
 # END COPYRIGHT
 
-from asyncio import to_thread
 from logging import getLogger
 from os import environ
 from typing import Any
@@ -207,11 +206,8 @@ class AgentNetworkPersistenceMiddleware(AgentMiddleware):
             # progress, so on a cold process the from_dict() fallback inside
             # the export would otherwise pay the one-time toolbox file read
             # and HOCON parse on the event loop.
-            if (
-                agent_progress_style == "connectivity"
-                and ConnectivityDictionaryConverter.peek_shared_toolbox_factory() is None
-            ):
-                await to_thread(ConnectivityDictionaryConverter.get_shared_toolbox_factory)
+            if agent_progress_style == "connectivity":
+                await ConnectivityDictionaryConverter.aget_shared_toolbox_factory()
             self._determine_exported_network_definition(self.sly_data, agent_progress_style)
 
             self.logger.debug(">>>>>>>>>>>>>>>>>>> DONE %s !!!>>>>>>>>>>>>>>>>>>", self.__class__.__name__)
@@ -266,7 +262,7 @@ class AgentNetworkPersistenceMiddleware(AgentMiddleware):
         self.logger.info(">>>>>>>>>>>>>>>>>>>Assemble and Persist Agent Network>>>>>>>>>>>>>>>>>>")
         self.logger.info("Agent Network Name: %s", agent_network_name)
 
-        subnetwork_names: list[str] = await GetSubnetwork.get_subnetwork_names(self.sly_data)
+        subnetwork_names: list[str] = await GetSubnetwork.get_subnetwork_names()
         mcp_servers: list[str] = await GetMcpTool.get_mcp_servers(self.sly_data)
         persistor: AgentNetworkPersistor = AgentNetworkPersistorFactory.create_persistor(
             {"reservationist": self.reservationist},

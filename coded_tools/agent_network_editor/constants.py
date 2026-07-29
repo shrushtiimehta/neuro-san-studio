@@ -29,10 +29,6 @@ AGENT_NETWORK_NAME: str = "agent_network_name"
 # Cached list of MCP server URLs available to the designer.
 MCP_SERVERS: str = "mcp_servers"
 
-# Cached list of external agent / subnetwork names (each in "/<name>" form). Populated by a lightweight
-# manifest-only parse so validators can check tool references without loading each subnetwork's full HOCON.
-SUBNETWORK_NAMES: str = "subnetwork_names"
-
 # Cached dict mapping external agent / subnetwork name to its front-man's description. Used when the editor needs to
 # surface available subnetworks (with descriptions) to the LLM.
 SUBNETWORKS: str = "subnetworks"

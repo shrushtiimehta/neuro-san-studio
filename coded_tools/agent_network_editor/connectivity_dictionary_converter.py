@@ -14,7 +14,6 @@
 #
 # END COPYRIGHT
 from copy import deepcopy
-from threading import Lock
 from typing import Any
 
 from leaf_common.serialization.interface.dictionary_converter import DictionaryConverter
@@ -28,6 +27,7 @@ from neuro_san.internals.run_context.interfaces.agent_network_inspector import A
 from neuro_san.internals.validation.network.url_network_validator import UrlNetworkValidator
 
 from coded_tools.agent_network_editor.designer_network_inspector import DesignerNetworkInspector
+from coded_tools.agent_network_editor.shared_process_cache import SharedProcessCache
 
 # Type definition for sanity
 Connectivity = list[dict[str, Any]]
@@ -44,21 +44,46 @@ class ConnectivityDictionaryConverter(DictionaryConverter):
     yet-another format.
     """
 
-    # Process-wide cache of the loaded ToolboxFactory used by from_dict() when
-    # no factory is passed to the constructor. The toolbox info is loaded
-    # lazily on the first use in the process — the default file ships inside
-    # the neuro-san package and the optional override comes from the
-    # AGENT_TOOLBOX_INFO_FILE env var, both read at that first use — and is
-    # deliberately never refreshed: picking up an edited toolbox info file
-    # requires a process restart. (The pre-cache behavior of re-loading per
-    # conversation was an accident of sly_data scoping, not a supported
-    # hot-reload feature.)
-    _shared_toolbox_factory: ContextTypeToolboxFactory | None = None
+    @staticmethod
+    def _load_shared_toolbox_factory() -> ContextTypeToolboxFactory:
+        """
+        Loader for the shared ToolboxFactory (runs inside SharedProcessCache).
 
-    # A threading.Lock rather than an asyncio.Lock: callers may run on
-    # different event loops in different threads, and an asyncio.Lock cannot
-    # be shared across event loops.
-    _shared_toolbox_factory_lock = Lock()
+        The empty config dict is equivalent to the None that
+        DesignerNetworkInspector.get_config() returns: the context type defaults
+        to "langchain" and any AGENT_TOOLBOX_INFO_FILE env var override is still
+        honored inside ToolboxFactory.
+
+        Returning only after load() succeeds matters twice over (the cache
+        publishes nothing when this raises): on failure (e.g. a bad
+        AGENT_TOOLBOX_INFO_FILE) the next call retries instead of serving a
+        half-initialized factory, and — because neuro-san 0.6.83's
+        ToolboxFactory.load() guards itself with a plain `loaded` flag and no
+        lock — publishing a fully load()-ed instance is what makes
+        ConnectivityReporter's unconditional per-report load() call a safe no-op
+        on every thread that can see this factory.
+
+        :return: A fully load()-ed ContextTypeToolboxFactory.
+        """
+        factory: ContextTypeToolboxFactory = MasterToolboxFactory.create_toolbox_factory({})
+        factory.load()
+        return factory
+
+    # Process-wide cache of the loaded ToolboxFactory used by from_dict() when
+    # no factory is passed to the constructor. The toolbox info
+    # is loaded lazily on the first use in the process — the default file
+    # ships inside the neuro-san package and the optional override comes from
+    # the AGENT_TOOLBOX_INFO_FILE env var, both read at that first use — and
+    # with no fingerprint it is deliberately never refreshed: picking up an
+    # edited toolbox info file requires a process restart. (The pre-cache
+    # behavior of re-loading per conversation was an accident of sly_data
+    # scoping, not a supported hot-reload feature.) Locking, publish ordering,
+    # and the async once-gate live in SharedProcessCache; access goes through
+    # the class by name (not cls) so a hypothetical subclass shares the one
+    # cache instead of splitting it.
+    _shared_toolbox_factory_cache: SharedProcessCache[ContextTypeToolboxFactory] = SharedProcessCache(
+        loader=_load_shared_toolbox_factory
+    )
 
     def __init__(
         self, include_keys: list[str] | None = None, toolbox_factory: ContextTypeToolboxFactory | None = None
@@ -78,61 +103,33 @@ class ConnectivityDictionaryConverter(DictionaryConverter):
         self.toolbox_factory: ContextTypeToolboxFactory | None = toolbox_factory
 
     @classmethod
-    def peek_shared_toolbox_factory(cls) -> ContextTypeToolboxFactory | None:
-        """
-        :return: The shared ToolboxFactory if it has already been loaded, else None.
-                Lock-free and safe to call from any thread or event loop. Async
-                callers can use a None result to decide to run
-                get_shared_toolbox_factory() in a worker thread instead of on
-                the event loop.
-        """
-        return ConnectivityDictionaryConverter._shared_toolbox_factory
-
-    @classmethod
     def get_shared_toolbox_factory(cls) -> ContextTypeToolboxFactory:
         """
         Get the process-wide ToolboxFactory, creating and load()-ing it on first call.
 
         The first call in the process does file I/O plus a HOCON parse, so
-        async callers should check peek_shared_toolbox_factory() first and
-        reach this through asyncio.to_thread() on a miss. Once loaded, calls
-        return via a lock-free attribute read.
-
-        Note: cache access goes through the class by name (not cls) so a
-        hypothetical subclass shares the one cache instead of splitting it.
-        All reads funnel through peek_shared_toolbox_factory() so any future
-        cache policy (expiration, refresh) has a single interception point;
-        only the publish below touches the attribute directly.
+        this must not be called on an event loop — async callers use
+        aget_shared_toolbox_factory(), which keeps the cold load in a worker
+        thread. Once loaded, calls return via a lock-free read.
 
         :return: The shared, already-load()-ed ToolboxFactory instance.
         """
-        factory: ContextTypeToolboxFactory | None = ConnectivityDictionaryConverter.peek_shared_toolbox_factory()
-        if factory is not None:
-            # Lock-free fast path: the attribute is published only after a
-            # successful load() and reference reads are atomic under the GIL,
-            # so a non-None read always yields a fully loaded factory.
-            return factory
+        return ConnectivityDictionaryConverter._shared_toolbox_factory_cache.get()
 
-        with ConnectivityDictionaryConverter._shared_toolbox_factory_lock:
-            factory = ConnectivityDictionaryConverter.peek_shared_toolbox_factory()
-            if factory is None:
-                # The empty config dict is equivalent to the None that
-                # DesignerNetworkInspector.get_config() returns: the context
-                # type defaults to "langchain" and any AGENT_TOOLBOX_INFO_FILE
-                # env var override is still honored inside ToolboxFactory.
-                factory = MasterToolboxFactory.create_toolbox_factory({})
-                factory.load()
-                # Publish only after load() succeeds, for two reasons:
-                # * On failure (e.g. a bad AGENT_TOOLBOX_INFO_FILE) the cache
-                #   stays empty and the next call retries instead of serving a
-                #   half-initialized factory.
-                # * neuro-san 0.6.83's ToolboxFactory.load() guards itself with
-                #   a plain `loaded` flag and no lock, so publishing a fully
-                #   load()-ed instance is what makes ConnectivityReporter's
-                #   unconditional per-report load() call a safe no-op on every
-                #   thread that can see this factory. Do not reorder.
-                ConnectivityDictionaryConverter._shared_toolbox_factory = factory
-        return factory
+    @classmethod
+    async def aget_shared_toolbox_factory(cls) -> ContextTypeToolboxFactory:
+        """
+        Async accessor for the process-wide ToolboxFactory: the one cold load
+        runs off the event loop (shared by concurrent cold callers); warm
+        calls return via the lock-free peek without awaiting.
+
+        This is the accessor async call sites should use — hand-rolling the
+        peek-then-to_thread dance per caller is how a caller forgets the
+        pre-warm and silently blocks the event loop on a cold process.
+
+        :return: The shared, already-load()-ed ToolboxFactory instance.
+        """
+        return await ConnectivityDictionaryConverter._shared_toolbox_factory_cache.aget()
 
     @classmethod
     def clear_shared_toolbox_factory_for_testing(cls):
@@ -146,10 +143,7 @@ class ConnectivityDictionaryConverter(DictionaryConverter):
         here rather than in conftest keeps all the singleton policy in this
         one class.
         """
-        # Taking the lock serializes the reset with a concurrent first load,
-        # so this can never unpublish a factory mid-initialization.
-        with ConnectivityDictionaryConverter._shared_toolbox_factory_lock:
-            ConnectivityDictionaryConverter._shared_toolbox_factory = None
+        ConnectivityDictionaryConverter._shared_toolbox_factory_cache.clear_for_testing()
 
     def to_dict(self, obj: Connectivity) -> dict[str, Any]:
         """
