@@ -44,7 +44,7 @@ class ProcessGlobals:  # pylint: disable=too-few-public-methods
     #    Holds:   a load()-ed neuro-san ContextTypeToolboxFactory used to render
     #             connectivity-style views of agent network definitions.
     #    Lives:   connectivity_dictionary_converter.ConnectivityDictionaryConverter
-    #             (get_/aget_shared_toolbox_factory)
+    #             (async get_shared_toolbox_factory)
     #    Expiry:  none — loaded once; restart to pick up an edited
     #             AGENT_TOOLBOX_INFO_FILE.
     #    Used by: ConnectivityDictionaryConverter.from_dict() (fallback when no
@@ -68,12 +68,15 @@ class ProcessGlobals:  # pylint: disable=too-few-public-methods
     #    Holds:   the "/<network_name>" list parsed from the designer manifest
     #             (AGENT_NETWORK_DESIGNER_MANIFEST_FILE).
     #    Lives:   get_subnetwork.GetSubnetwork (async get_subnetwork_names)
-    #    Expiry:  manifest path/mtime change, or at most
-    #             get_subnetwork.SUBNETWORK_NAMES_TTL_SECONDS (the manifest
+    #    Expiry:  manifest path/mtime change, or one
+    #             AGENT_MANIFEST_UPDATE_PERIOD_SECONDS period when manifest
+    #             updates are enabled — the same setting that drives the
+    #             server's own manifest refresh; <= 0 (static server) means no
+    #             time-based expiry. The period matters because the manifest
     #             `include`s other manifests a cheap probe cannot see, notably
     #             registries/generated/manifest.hocon which grows as the designer
     #             saves networks on local runs; server deployments never write
-    #             the manifest at runtime).
+    #             the manifest at runtime.
     #    Used by: GetSubnetwork.get_subnetworks() (the coded tool path);
     #             agent_network_structure_validation_middleware
     #             .AgentNetworkStructureValidationMiddleware.validate();
