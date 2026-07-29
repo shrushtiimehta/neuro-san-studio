@@ -103,29 +103,19 @@ class ConnectivityDictionaryConverter(DictionaryConverter):
         self.toolbox_factory: ContextTypeToolboxFactory | None = toolbox_factory
 
     @classmethod
-    def get_shared_toolbox_factory(cls) -> ContextTypeToolboxFactory:
+    async def get_shared_toolbox_factory(cls) -> ContextTypeToolboxFactory:
         """
-        Get the process-wide ToolboxFactory, creating and load()-ing it on first call.
+        Get the process-wide ToolboxFactory, creating and load()-ing it on
+        the first call in the process: that one cold load (file I/O + HOCON
+        parse) runs off the event loop, shared by concurrent cold callers;
+        warm calls resolve via the lock-free peek without suspending the
+        caller (the await completes immediately).
 
-        The first call in the process does file I/O plus a HOCON parse, so
-        this must not be called on an event loop — async callers use
-        aget_shared_toolbox_factory(), which keeps the cold load in a worker
-        thread. Once loaded, calls return via a lock-free read.
-
-        :return: The shared, already-load()-ed ToolboxFactory instance.
-        """
-        return ConnectivityDictionaryConverter._shared_toolbox_factory_cache.get()
-
-    @classmethod
-    async def aget_shared_toolbox_factory(cls) -> ContextTypeToolboxFactory:
-        """
-        Async accessor for the process-wide ToolboxFactory: the one cold load
-        runs off the event loop (shared by concurrent cold callers); warm
-        calls return via the lock-free peek without awaiting.
-
-        This is the accessor async call sites should use — hand-rolling the
+        This is the accessor call sites should use — hand-rolling the
         peek-then-to_thread dance per caller is how a caller forgets the
-        pre-warm and silently blocks the event loop on a cold process.
+        pre-warm and silently blocks the event loop on a cold process. (The
+        synchronous from_dict() is the one exception: it reads the
+        underlying cache directly.)
 
         :return: The shared, already-load()-ed ToolboxFactory instance.
         """
@@ -200,7 +190,12 @@ class ConnectivityDictionaryConverter(DictionaryConverter):
         # caller benefits from the cache without having to pass one in.
         toolbox_factory: ContextTypeToolboxFactory | None = self.toolbox_factory
         if toolbox_factory is None:
-            toolbox_factory = self.get_shared_toolbox_factory()
+            # from_dict() is synchronous (DictionaryConverter interface), so
+            # it reads the shared cache directly — a lock-free hit once warm.
+            # Async call sites pre-warm via get_shared_toolbox_factory(), so
+            # in practice the blocking first load has already happened off
+            # the event loop by the time this line runs.
+            toolbox_factory = ConnectivityDictionaryConverter._shared_toolbox_factory_cache.get()
 
         reporter: ConnectivityReporter = ConnectivityReporter(inspector, toolbox_factory)
         connectivity = reporter.report_network_connectivity()

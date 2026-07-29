@@ -273,11 +273,11 @@ class ProgressHandler:
 
             # Warm the process-wide ToolboxFactory cache that from_dict()
             # falls back to. Only the first call in the process pays for the
-            # file read + HOCON parse, off the event loop; once warm, aget's
+            # file read + HOCON parse, off the event loop; once warm, its
             # peek and the fallback inside from_dict() are lock-free reads
             # with no thread hop, no lock traffic, and no actual suspension
             # between the throttle stamp and the conversion snapshot.
-            await ConnectivityDictionaryConverter.aget_shared_toolbox_factory()
+            await ConnectivityDictionaryConverter.get_shared_toolbox_factory()
 
             # Do the conversion
             use_key: str = "connectivity_info"
