@@ -27,7 +27,6 @@ from typing import Awaitable
 from typing import Callable
 from typing import override
 
-from boto3 import client as boto3_client
 from botocore.exceptions import ClientError
 from botocore.exceptions import NoCredentialsError
 from langchain.agents.middleware.types import AgentMiddleware
@@ -40,6 +39,7 @@ from langchain.agents.middleware.types import hook_config
 from langchain_core.messages import AIMessage
 from langchain_core.messages import BaseMessage
 from langchain_core.messages import SystemMessage
+from leaf_common.config.resolver_util import ResolverUtil
 from neuro_san.interfaces.agent_progress_reporter import AgentProgressReporter
 from neuro_san.internals.persistence.abstract_async_config_restorer import AbstractAsyncConfigRestorer
 from pyparsing.exceptions import ParseException
@@ -379,6 +379,7 @@ class AgentNetworkDefinitionMiddleware(AgentMiddleware):
         :return: Parsed JSON content as a dict (matches what ``AgentNetwork.get_config()``
                 would return for the same reservation)
         """
+        boto3_client = ResolverUtil.create_type("boto3.client", install_if_missing="boto3")
         s3 = boto3_client("s3")
         key: str = f"reservations/{reservation_id}.json"
         response: dict[str, Any] = s3.get_object(Bucket=bucket, Key=key)
