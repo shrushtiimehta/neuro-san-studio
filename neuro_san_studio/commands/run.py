@@ -77,6 +77,7 @@ class NeuroSanRunner:
             "server_http_port": int(os.getenv("NEURO_SAN_SERVER_HTTP_PORT", "8080")),
             "server_connection": str(os.getenv("NEURO_SAN_SERVER_CONNECTION", "http")),
             "manifest_update_period_seconds": int(os.getenv("AGENT_MANIFEST_UPDATE_PERIOD_SECONDS", "5")),
+            "manifest_concurrency_context": int(os.getenv("AGENT_MANIFEST_CONCURRENCY_CONTEXT", "spawn")),
             "default_sly_data": str(os.getenv("DEFAULT_SLY_DATA", "")),
             "nsflow_host": os.getenv("NSFLOW_HOST", "localhost"),
             "nsflow_port": int(os.getenv("NSFLOW_PORT", "4173")),
@@ -146,6 +147,7 @@ class NeuroSanRunner:
         os.environ["MCP_SERVERS_INFO_FILE"] = self.args["mcp_servers_info_file"]
         os.environ["NEURO_SAN_SERVER_CONNECTION"] = self.args["server_connection"]
         os.environ["AGENT_MANIFEST_UPDATE_PERIOD_SECONDS"] = str(self.args["manifest_update_period_seconds"])
+        os.environ["AGENT_MANIFEST_CONCURRENCY_CONTEXT"] = str(self.args["manifest_concurrency_context"])
         os.environ["LOG_LEVEL"] = self.args["log_level"]
         print(f"PYTHONPATH set to: {os.environ['PYTHONPATH']}")
         print(f"AGENT_MANIFEST_FILE set to: {os.environ['AGENT_MANIFEST_FILE']}")
@@ -153,6 +155,7 @@ class NeuroSanRunner:
         print(f"MCP_SERVERS_INFO_FILE set to: {os.environ['MCP_SERVERS_INFO_FILE']}")
         print(f"NEURO_SAN_SERVER_CONNECTION set to: {os.environ['NEURO_SAN_SERVER_CONNECTION']}")
         print(f"AGENT_MANIFEST_UPDATE_PERIOD_SECONDS set to: {os.environ['AGENT_MANIFEST_UPDATE_PERIOD_SECONDS']}")
+        print(f"AGENT_MANIFEST_CONCURRENCY_CONTEXT set to: {os.environ['AGENT_MANIFEST_CONCURRENCY_CONTEXT']}")
         print(f"LOG_LEVEL set to: {os.environ['LOG_LEVEL']}\n")
 
         # Client-only env variables
