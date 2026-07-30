@@ -69,7 +69,9 @@ class WriteAllInstructions(BranchActivation, CodedTool):
         :return: A success summary string if all writers succeeded, or an "Error: ..."
             string listing per-agent failures otherwise.
         """
-        agents: list[dict[str, Any]] = args.get("agents") or []
+        # list[Any], not list[dict]: malformed entries are tolerated here and
+        # fail loudly per-entry in call_writer.
+        agents: list[Any] = args.get("agents") or []
         if not agents:
             return "Error: No agents provided."
         if not sly_data.get(AGENT_NETWORK_DEFINITION):
@@ -131,7 +133,7 @@ class WriteAllInstructions(BranchActivation, CodedTool):
     async def call_writer(
         self,
         writer_name: str,
-        entry: dict[str, Any],
+        entry: Any,
         args: dict[str, Any],
         sly_data: dict[str, Any],
     ) -> str:
