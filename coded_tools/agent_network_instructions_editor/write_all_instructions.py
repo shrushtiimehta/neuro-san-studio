@@ -112,16 +112,19 @@ class WriteAllInstructions(BranchActivation, CodedTool):
         agent_name — duplicates would race to write the same agent's fields
         concurrently, leaving whichever writer finished last in the network
         definition. The LAST entry wins (its change_request is the most
-        recent directive), at the first occurrence's position. Non-dict
-        entries get a unique key so they survive to fail loudly per-entry
-        in call_writer instead of being silently dropped here.
+        recent directive), at the first occurrence's position. Malformed
+        entries (non-dicts, and dicts without an agent_name) get a unique
+        per-index key so each survives to fail loudly per-entry in
+        call_writer instead of collapsing together or being dropped here.
 
         :param agents: The raw agents list from the tool arguments.
         :return: The deduplicated list, in first-seen order.
         """
         unique: dict[Any, Any] = {}
         for index, entry in enumerate(agents):
-            key = entry.get("agent_name") if isinstance(entry, dict) else f"<malformed entry {index}>"
+            key = entry.get("agent_name") if isinstance(entry, dict) else None
+            if not key:
+                key = f"<malformed entry {index}>"
             unique[key] = entry
         return list(unique.values())
 

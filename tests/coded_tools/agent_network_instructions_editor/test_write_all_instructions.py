@@ -181,6 +181,6 @@ class TestDedupAgents(TestCase):
         )
 
     def test_malformed_entries_survive_dedup(self):
-        """Non-dict entries are kept (uniquely keyed) so they fail per-entry downstream, not vanish here."""
-        agents = ["oops", {"agent_name": "a"}, "oops"]
-        self.assertEqual(WriteAllInstructions._dedup_agents(agents), ["oops", {"agent_name": "a"}, "oops"])
+        """Malformed entries are kept (uniquely keyed) so each fails per-entry downstream, not vanish here."""
+        agents = ["oops", {"agent_name": "a"}, "oops", {"change_request": "no name"}, {}]
+        self.assertEqual(WriteAllInstructions._dedup_agents(agents), agents)
