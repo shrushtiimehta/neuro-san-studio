@@ -101,6 +101,35 @@ class ProcessGlobals:  # pylint: disable=too-few-public-methods
     #             is set, because /function responses are then
     #             caller-specific (see _shared_descriptions_cache_enabled).
     #    Used by: GetSubnetwork.get_subnetworks() (the coded tool path).
+    #
+    # 5. Shared MCP servers
+    #    Holds:   the list of MCP server URLs parsed from mcp_info.hocon
+    #             (MCP_SERVERS_INFO_FILE, the cwd scaffold, or the bundled
+    #             copy — see GetMcpTool.get_mcp_info_file).
+    #    Lives:   get_mcp_tool.GetMcpTool (async get_mcp_servers)
+    #    Expiry:  resolved path or mtime change — no time bucket, since
+    #             nothing writes the file at runtime.
+    #    Used by: GetMcpTool (input to the tool-descriptions cache below);
+    #             agent_network_structure_validation_middleware
+    #             .AgentNetworkStructureValidationMiddleware.validate();
+    #             agent_network_persistence_middleware.AgentNetworkPersistenceMiddleware
+    #             ._assemble_and_persist().
+    #
+    # 6. Shared MCP tool descriptions
+    #    Holds:   the {server URL: tool descriptions} mapping fetched from
+    #             the MCP servers themselves (network calls).
+    #    Lives:   get_mcp_tool.GetMcpTool (async get_mcp_tool_descriptions)
+    #    Expiry:  mcp_info.hocon path/mtime change, or one
+    #             AGENT_NETWORK_DESIGNER_MCP_TOOLS_TTL_SECONDS window
+    #             (default 300s, clamped to at least twice the per-server
+    #             fetch cap; <= 0 disables time-based refresh) — the
+    #             sources are external servers with no local change signal,
+    #             so the TTL is both the freshness bound and the recovery
+    #             bound after a failed or partial fetch. With time-based
+    #             refresh disabled, an all-failed fetch raises instead of
+    #             publishing, so recovery stays possible.
+    #    Used by: GetMcpTool.async_invoke() (the coded tool the editor LLM
+    #             calls).
     # -----------------------------------------------------------------------
 
     # Machine-readable registry of the entries above, as
@@ -126,6 +155,16 @@ class ProcessGlobals:  # pylint: disable=too-few-public-methods
             "coded_tools.agent_network_editor.get_subnetwork",
             "GetSubnetwork",
             "clear_shared_subnetwork_descriptions_for_testing",
+        ),
+        (
+            "coded_tools.agent_network_editor.get_mcp_tool",
+            "GetMcpTool",
+            "clear_shared_mcp_servers_for_testing",
+        ),
+        (
+            "coded_tools.agent_network_editor.get_mcp_tool",
+            "GetMcpTool",
+            "clear_shared_mcp_tool_descriptions_for_testing",
         ),
     ]
 

@@ -18,7 +18,6 @@ import asyncio
 import logging
 import os
 from functools import partial
-from time import monotonic
 from typing import Any
 
 from leaf_common.config.config_filter_chain import ConfigFilterChain
@@ -120,13 +119,9 @@ class GetSubnetwork(BranchActivation, CodedTool):
         :return: (path, mtime_ns or None, time bucket) tuple.
         """
         manifest_file: str = GetSubnetwork._resolve_manifest_file()
-        try:
-            mtime_ns: int | None = os.stat(manifest_file).st_mtime_ns
-        except OSError:
-            mtime_ns = None
+        mtime_ns: int | None = SharedProcessCache.stat_mtime_ns(manifest_file)
         period: float = GetSubnetwork._manifest_update_period_seconds()
-        time_bucket: int = int(monotonic() / period) if period > 0 else 0
-        return (manifest_file, mtime_ns, time_bucket)
+        return (manifest_file, mtime_ns, SharedProcessCache.time_bucket(period))
 
     @staticmethod
     def _load_subnetwork_names() -> list[str]:
