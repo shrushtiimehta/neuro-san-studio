@@ -15,12 +15,12 @@
 # END COPYRIGHT
 
 import asyncio
-import json
 import logging
 from typing import Any
 
 from neuro_san.interfaces.coded_tool import CodedTool
 from neuro_san.internals.graph.activations.branch_activation import BranchActivation
+from neuro_san.internals.parsers.structure.json_structure_parser import JsonStructureParser
 
 from coded_tools.agent_network_editor.and_logger import AndLogger
 from coded_tools.agent_network_editor.constants import AGENT_NETWORK_DEFINITION
@@ -79,6 +79,8 @@ class WriteAllInstructions(BranchActivation, CodedTool):
         tools_map: dict[str, str] = args.get("tools") or {}
         writer_name: str = tools_map.get("instructions_writer", "instructions_writer")
 
+        agents = self._dedup_agents(agents)
+
         logger = AndLogger(logging.getLogger(self.__class__.__name__))
         logger.info("Dispatching %d parallel '%s' calls", len(agents), writer_name)
 
@@ -90,7 +92,7 @@ class WriteAllInstructions(BranchActivation, CodedTool):
         ok: list[str] = []
         errs: list[str] = []
         for entry, result in zip(agents, results):
-            name = entry.get("agent_name") or "<unknown>"
+            name = (entry.get("agent_name") if isinstance(entry, dict) else None) or "<unknown>"
             if isinstance(result, BaseException):
                 errs.append(f"{name}: {result!r}")
             elif result:
@@ -102,6 +104,26 @@ class WriteAllInstructions(BranchActivation, CodedTool):
         if errs:
             return f"Error: Instructions/description set for {len(ok)} agents; {len(errs)} failed: " + "; ".join(errs)
         return f"Instructions/description have been set for all {len(ok)} agents."
+
+    @staticmethod
+    def _dedup_agents(agents: list[Any]) -> list[Any]:
+        """
+        Collapse duplicate entries so at most one writer is dispatched per
+        agent_name — duplicates would race to write the same agent's fields
+        concurrently, leaving whichever writer finished last in the network
+        definition. The LAST entry wins (its change_request is the most
+        recent directive), at the first occurrence's position. Non-dict
+        entries get a unique key so they survive to fail loudly per-entry
+        in call_writer instead of being silently dropped here.
+
+        :param agents: The raw agents list from the tool arguments.
+        :return: The deduplicated list, in first-seen order.
+        """
+        unique: dict[Any, Any] = {}
+        for index, entry in enumerate(agents):
+            key = entry.get("agent_name") if isinstance(entry, dict) else f"<malformed entry {index}>"
+            unique[key] = entry
+        return list(unique.values())
 
     async def call_writer(
         self,
@@ -128,11 +150,11 @@ class WriteAllInstructions(BranchActivation, CodedTool):
             progress_reporter used for the per-agent progress report.
         :param sly_data: Shared private data forwarded to the writer call.
         :return: "" on success, or an "Error: ..." string describing the failure.
-            A `ValueError` is raised if `entry` has no `agent_name`.
+            A `ValueError` is raised if `entry` is not a dict with an `agent_name`.
         """
-        agent_name: str = entry.get("agent_name")
+        agent_name: str | None = entry.get("agent_name") if isinstance(entry, dict) else None
         if not agent_name:
-            raise ValueError("Missing 'agent_name' in agents entry.")
+            raise ValueError(f"Malformed agents entry (expected an object with an 'agent_name'): {entry!r}")
 
         tool_args: dict[str, Any] = {"agent_name": agent_name}
         agent_network_description: str = args.get("agent_network_description") or ""
@@ -146,7 +168,10 @@ class WriteAllInstructions(BranchActivation, CodedTool):
         response: str = await caller.call_agent(tool_args=tool_args, sly_data=sly_data)
 
         if isinstance(response, str) and response.lstrip().startswith("Error:"):
-            # The writer itself failed loudly; pass its message through untouched.
+            # Writer failure surfaced through the framework's plain-string error
+            # path (error_formatter unset). Under this network's
+            # "error_formatter": "json", failures arrive instead as a JSON
+            # {"error": ..., "tool": ...} body, detected in _apply_writer_response.
             return response.strip()
 
         error: str = self._apply_writer_response(agent_name, response, sly_data)
@@ -178,7 +203,9 @@ class WriteAllInstructions(BranchActivation, CodedTool):
             "description" string fields. A field absent from the object keeps
             its current value — the writer omits a field when a single-field
             change_request leaves the other unchanged, instead of re-emitting
-            the existing text through the model.
+            the existing text through the model. An empty object is the
+            writer's documented no-op ("no change needed") and succeeds
+            without writing anything.
         :param sly_data: Carries the agent_network_definition to update.
         :return: "" on success, or an "Error: ..." string.
         """
@@ -190,49 +217,81 @@ class WriteAllInstructions(BranchActivation, CodedTool):
         if network_def[agent_name].get("instructions") is None:
             return f"Error: Agent has no instructions field: {agent_name}. It is a function agent."
 
-        fields: dict[str, Any] | None = WriteAllInstructions._parse_writer_fields(response)
-        if fields is None:
-            return f"Error: Writer response was not a JSON object: {response[:200]!r}"
+        updates, error = WriteAllInstructions._validate_writer_fields(response)
+        if error:
+            return error
 
         logger = AndLogger(logging.getLogger(WriteAllInstructions.__name__))
-        applied = False
-        for field in ("instructions", "description"):
-            value = fields.get(field)
-            if isinstance(value, str) and value:
-                network_def[agent_name][field] = value
-                logger.info("Set %s for '%s' (%d chars)", field, agent_name, len(value))
-                applied = True
-        if not applied:
-            return "Error: Writer response contained neither 'instructions' nor 'description'."
+        if not updates:
+            # The writer's documented no-op: {} means "no change needed".
+            logger.info("Writer reported no change needed for '%s'", agent_name)
+            return ""
+
+        for field, value in updates.items():
+            network_def[agent_name][field] = value
+            logger.info("Set %s for '%s' (%d chars)", field, agent_name, len(value))
 
         sly_data[AGENT_NETWORK_DEFINITION] = network_def
         return ""
+
+    @staticmethod
+    def _validate_writer_fields(response: str) -> tuple[dict[str, str], str]:
+        """
+        Parse a writer's answer and validate its fields BEFORE anything is
+        applied, so a bad value can never leave an agent half-updated.
+
+        :param response: The writer's response text.
+        :return: An (updates, error) tuple. On success, `updates` holds the
+            validated field values to apply and `error` is "" — an empty
+            `updates` with no error is the writer's documented {} no-op
+            ("no change needed"). On failure, `error` is an "Error: ..."
+            string and `updates` is empty.
+        """
+        fields: dict[str, Any] | None = WriteAllInstructions._parse_writer_fields(response)
+        if fields is None:
+            return {}, f"Error: Writer response was not a JSON object: {response[:200]!r}"
+        if "error" in fields:
+            # The framework's "json" error_formatter replaces a failed agent's
+            # answer with {"error": ..., "tool": ...}; surface it as this
+            # writer's failure instead of "neither field present".
+            return {}, f"Error: Writer failed: {str(fields['error'])[:200]}"
+
+        updates: dict[str, str] = {}
+        invalid: list[str] = []
+        for field in ("instructions", "description"):
+            if field not in fields:
+                # Omitted field keeps its current value, by contract.
+                continue
+            value = fields[field]
+            if isinstance(value, str) and value.strip():
+                updates[field] = value
+            else:
+                invalid.append(f"{field}={value!r}"[:120])
+        if invalid:
+            return {}, f"Error: Writer returned non-text or empty value(s): {'; '.join(invalid)}"
+        if not updates and fields:
+            return {}, "Error: Writer response contained neither 'instructions' nor 'description'."
+        return updates, ""
 
     @staticmethod
     def _parse_writer_fields(response: str) -> dict[str, Any] | None:
         """
         Best-effort parse of a writer's answer into a dict.
 
-        The writer is instructed to answer with ONLY a bare JSON object, but
-        models occasionally wrap it in code fences or a sentence of prose, so
-        on a failed direct parse this falls back to slicing from the first
-        '{' to the last '}' before giving up.
+        Delegates to the framework's JsonStructureParser — the same parser
+        behind hocon "structure_formats" (which only applies to front men,
+        so it must be invoked by hand here). It extracts the JSON object
+        from code fences or surrounding prose and parses via json_repair,
+        so it also recovers near-JSON the model is prone to emit: literal
+        newlines inside string values (likely, given this prompt's
+        ~120-char wrapped lines), trailing commas, and single-quoted keys.
 
         :param response: The writer's response text.
         :return: The parsed dict, or None when no JSON object can be extracted.
+            An empty object parses to {} — distinct from None — so callers
+            can tell "writer said no-op" from "writer answered garbage".
         """
         if not isinstance(response, str):
+            # JsonStructureParser raises TypeError on None; degrade to "no structure".
             return None
-        text = response.strip()
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            start = text.find("{")
-            end = text.rfind("}")
-            if start < 0 or end <= start:
-                return None
-            try:
-                parsed = json.loads(text[start : end + 1])
-            except json.JSONDecodeError:
-                return None
-        return parsed if isinstance(parsed, dict) else None
+        return JsonStructureParser().parse_structure(response)

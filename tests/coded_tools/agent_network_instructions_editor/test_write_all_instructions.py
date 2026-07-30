@@ -14,10 +14,11 @@
 #
 # END COPYRIGHT
 """
-Policy tests for WriteAllInstructions' parse-and-apply half: how a writer's
-JSON answer is extracted and written into the agent_network_definition, and
-which malformed answers degrade to per-agent errors. The LLM fan-out half
-needs a live framework and is exercised by the network itself.
+Policy tests for WriteAllInstructions' non-LLM half: how the dispatch list is
+deduplicated, how a writer's JSON answer is extracted and written into the
+agent_network_definition, and which malformed answers degrade to per-agent
+errors. The LLM fan-out half needs a live framework and is exercised by the
+network itself.
 
 Skipped (not failed) in environments whose neuro-san predates the imports
 write_all_instructions needs, so the suite still collects everywhere.
@@ -57,6 +58,22 @@ class TestParseWriterFields(TestCase):
         """Garbage, bare strings, and JSON non-objects all yield None."""
         for bad in ("no json here", '"just a string"', "[1, 2]", "{broken", None):
             self.assertIsNone(WriteAllInstructions._parse_writer_fields(bad))
+
+    def test_near_json_answers_are_repaired(self):
+        """json_repair recovers the near-JSON shapes models actually emit."""
+        literal_newline = '{"instructions": "line one\nline two", "description": "does x"}'
+        self.assertEqual(
+            WriteAllInstructions._parse_writer_fields(literal_newline),
+            {"instructions": "line one\nline two", "description": "does x"},
+        )
+        trailing_comma = WriteAllInstructions._parse_writer_fields('{"instructions": "do x",}')
+        self.assertEqual(trailing_comma, {"instructions": "do x"})
+        single_quotes = WriteAllInstructions._parse_writer_fields("{'description': 'does x'}")
+        self.assertEqual(single_quotes, {"description": "does x"})
+
+    def test_empty_object_parses_to_empty_dict_not_none(self):
+        """The writer's documented no-op answer stays distinguishable from garbage."""
+        self.assertEqual(WriteAllInstructions._parse_writer_fields("{}"), {})
 
 
 class TestApplyWriterResponse(TestCase):
@@ -109,13 +126,61 @@ class TestApplyWriterResponse(TestCase):
         self.assertTrue(error.startswith("Error: Writer response was not a JSON object"))
         self.assertEqual(self.sly_data[AGENT_NETWORK_DEFINITION]["store_manager"]["instructions"], "")
 
-    def test_empty_object_is_an_error(self):
-        """An answer with neither field set must not count as a success."""
-        for empty in ("{}", '{"instructions": "", "description": ""}', '{"instructions": 42}'):
-            error = WriteAllInstructions._apply_writer_response("store_manager", empty, self.sly_data)
-            self.assertEqual(error, "Error: Writer response contained neither 'instructions' nor 'description'.")
+    def test_empty_object_is_a_no_op_success(self):
+        """The writer's documented no-op ({} = "no change needed") succeeds without writing."""
+        self.sly_data[AGENT_NETWORK_DEFINITION]["store_manager"]["instructions"] = "keep me"
+        error = WriteAllInstructions._apply_writer_response("store_manager", "{}", self.sly_data)
+        self.assertEqual(error, "")
+        self.assertEqual(self.sly_data[AGENT_NETWORK_DEFINITION]["store_manager"]["instructions"], "keep me")
+
+    def test_invalid_field_values_are_an_error(self):
+        """Present-but-unusable values (empty, blank, non-string) fail loudly instead of silently skipping."""
+        for bad in ('{"instructions": "", "description": ""}', '{"instructions": 42}', '{"description": "  "}'):
+            error = WriteAllInstructions._apply_writer_response("store_manager", bad, self.sly_data)
+            self.assertTrue(error.startswith("Error: Writer returned non-text or empty value"), error)
+
+    def test_mixed_valid_and_invalid_values_apply_nothing(self):
+        """Validation happens before any write, so a bad field cannot leave the agent half-updated."""
+        error = WriteAllInstructions._apply_writer_response(
+            "store_manager", '{"instructions": "good text", "description": 42}', self.sly_data
+        )
+        self.assertTrue(error.startswith("Error: Writer returned non-text or empty value"), error)
+        self.assertEqual(self.sly_data[AGENT_NETWORK_DEFINITION]["store_manager"]["instructions"], "")
+
+    def test_neither_field_in_a_non_empty_object_is_an_error(self):
+        """A contract-violating object (keys, but none of ours) must not count as a success."""
+        error = WriteAllInstructions._apply_writer_response("store_manager", '{"unexpected": "x"}', self.sly_data)
+        self.assertEqual(error, "Error: Writer response contained neither 'instructions' nor 'description'.")
+
+    def test_framework_error_body_is_surfaced_as_the_writer_failure(self):
+        """The json error_formatter's {"error", "tool"} body becomes this agent's error, and nothing is applied."""
+        response = '```json\n{"error": "something broke", "tool": "instructions_writer"}\n```'
+        error = WriteAllInstructions._apply_writer_response("store_manager", response, self.sly_data)
+        self.assertEqual(error, "Error: Writer failed: something broke")
+        self.assertEqual(self.sly_data[AGENT_NETWORK_DEFINITION]["store_manager"]["instructions"], "")
 
     def test_missing_network_definition_is_an_error(self):
         """No definition in sly_data means nothing to write into."""
         error = WriteAllInstructions._apply_writer_response("store_manager", '{"instructions": "x"}', {})
         self.assertEqual(error, "Error: No network in sly data!")
+
+
+class TestDedupAgents(TestCase):
+    """Normalization of the agents list before the writer fan-out."""
+
+    def test_duplicate_agent_names_collapse_to_the_last_entry(self):
+        """Duplicates would race two writers on one agent; the last change_request wins, in first-seen order."""
+        agents = [
+            {"agent_name": "a", "change_request": "first"},
+            {"agent_name": "b"},
+            {"agent_name": "a", "change_request": "second"},
+        ]
+        self.assertEqual(
+            WriteAllInstructions._dedup_agents(agents),
+            [{"agent_name": "a", "change_request": "second"}, {"agent_name": "b"}],
+        )
+
+    def test_malformed_entries_survive_dedup(self):
+        """Non-dict entries are kept (uniquely keyed) so they fail per-entry downstream, not vanish here."""
+        agents = ["oops", {"agent_name": "a"}, "oops"]
+        self.assertEqual(WriteAllInstructions._dedup_agents(agents), ["oops", {"agent_name": "a"}, "oops"])
