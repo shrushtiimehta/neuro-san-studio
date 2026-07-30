@@ -99,22 +99,22 @@ class GetMcpTool(CodedTool):
 
         * the resolved path — an env-var change or the cwd-scaffolded file
           appearing takes effect on the next read;
-        * the file's mtime — a direct edit invalidates immediately, and a
-          missing file (mtime None) self-heals the moment it appears.
+        * the file's modification_time — a direct edit invalidates immediately, and a
+          missing file (modification_time None) self-heals the moment it appears.
 
         Two changes are invisible to this probe: HOCON `${...}` references
         inside the file resolve against the environment at parse time, so
         changing THOSE env vars alters the parse result without touching
-        path or mtime; and LangChainMcpAdapter keeps its own copy of the
+        path or modification_time; and LangChainMcpAdapter keeps its own copy of the
         servers info, frozen at its first load — a file edit refreshes
         which URLs this class serves, but not the connection details the
         adapter already latched. Both heal on process restart (or on the
-        mtime change of the next file edit, for the first).
+        modification_time change of the next file edit, for the first).
 
-        :return: (path, mtime_ns or None) tuple.
+        :return: (path, modification_time_ns or None) tuple.
         """
         mcp_info_file: str = GetMcpTool.get_mcp_info_file()
-        return (mcp_info_file, SharedProcessCache.stat_mtime_ns(mcp_info_file))
+        return (mcp_info_file, SharedProcessCache.stat_modification_time_ns(mcp_info_file))
 
     @staticmethod
     def _load_mcp_servers() -> list[str]:
@@ -125,8 +125,8 @@ class GetMcpTool(CodedTool):
         :return: List of MCP server URLs from mcp_info.hocon. A missing,
                 unreadable, or unparseable file returns an empty list, which
                 IS published: the fingerprint self-heals it — a missing file
-                flips the mtime component when it appears, and fixing a
-                broken file changes its mtime — so nothing can pin an empty
+                flips the modification_time component when it appears, and fixing a
+                broken file changes its modification_time — so nothing can pin an empty
                 list past the next change to the file itself (env-var
                 references INSIDE the file are the one exception; see
                 _mcp_info_fingerprint).
@@ -155,7 +155,7 @@ class GetMcpTool(CodedTool):
     # Process-wide cache of the MCP server URLs parsed from mcp_info.hocon.
     # Previously cached per sly_data scope, so a server handling N concurrent
     # conversations re-parsed the same HOCON N times, on the event loop.
-    # The (path, mtime) fingerprint picks up env-var changes and file edits
+    # The (path, modification_time) fingerprint picks up env-var changes and file edits
     # immediately; there is no time bucket because nothing changes this file
     # at runtime. Locking, publish ordering, and the async once-gate live in
     # SharedProcessCache; access goes through the class by name (not cls) so
@@ -236,11 +236,11 @@ class GetMcpTool(CodedTool):
         one and revive a stale entry; carrying the TTL makes any change to
         it an immediate miss instead.
 
-        :return: (path, mtime_ns or None, ttl, time bucket) tuple.
+        :return: (path, modification_time_ns or None, ttl, time bucket) tuple.
         """
-        mcp_info_file, mtime_ns = GetMcpTool._mcp_info_fingerprint()
+        mcp_info_file, modification_time_ns = GetMcpTool._mcp_info_fingerprint()
         ttl: float = GetMcpTool._mcp_tools_ttl_seconds()
-        return (mcp_info_file, mtime_ns, ttl, SharedProcessCache.time_bucket(ttl))
+        return (mcp_info_file, modification_time_ns, ttl, SharedProcessCache.time_bucket(ttl))
 
     @staticmethod
     async def _fetch_tool_descriptions(server: str, fetch_timeout: float | None) -> tuple[str, str | None]:
@@ -343,7 +343,7 @@ class GetMcpTool(CodedTool):
     # scope, so every conversation paid the full network round-trip to every
     # server (sequentially). The sources are external servers with no local
     # change signal, so freshness is time-based: the fingerprint reuses the
-    # mcp_info.hocon (path, mtime) probe — a config edit refreshes
+    # mcp_info.hocon (path, modification_time) probe — a config edit refreshes
     # immediately — plus a TTL bucket (default 300s, see
     # _mcp_tools_ttl_seconds) that bounds both staleness and how long a
     # failed fetch's empty/partial result can be served. (With time-based
