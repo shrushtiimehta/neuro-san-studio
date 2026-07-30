@@ -430,6 +430,8 @@ a Slack integration that lets you interact with Neuro SAN directly from your wor
 * YouTube: [Decision AI](https://www.youtube.com/@decision-ai)
 * X: [@cognizantailab](https://x.com/cognizantailab)
 * LinkedIn: [Cognizant AI Lab](https://www.linkedin.com/showcase/cognizant-ai-lab)
+* Amazon Marketplace: [Cognizant Neuro SAN](https://aws.amazon.com/marketplace/pp/prodview-z246c4x7j3xb6) 
+* Azure Marketplace: [Cognizant Neuro SAN](https://marketplace.microsoft.com/en-us/product/virtual-machine/cognizant.cognizant_neurosanai-application)
 
 ---
 
