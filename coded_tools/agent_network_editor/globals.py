@@ -68,7 +68,7 @@ class ProcessGlobals:  # pylint: disable=too-few-public-methods
     #    Holds:   the "/<network_name>" list parsed from the designer manifest
     #             (AGENT_NETWORK_DESIGNER_MANIFEST_FILE).
     #    Lives:   get_subnetwork.GetSubnetwork (async get_subnetwork_names)
-    #    Expiry:  manifest path/mtime change, or one
+    #    Expiry:  manifest path/modification_time change, or one
     #             AGENT_MANIFEST_UPDATE_PERIOD_SECONDS period when manifest
     #             updates are enabled — the same setting that drives the
     #             server's own manifest refresh; <= 0 (static server) means no
@@ -107,7 +107,7 @@ class ProcessGlobals:  # pylint: disable=too-few-public-methods
     #             (MCP_SERVERS_INFO_FILE, the cwd scaffold, or the bundled
     #             copy — see GetMcpTool.get_mcp_info_file).
     #    Lives:   get_mcp_tool.GetMcpTool (async get_mcp_servers)
-    #    Expiry:  resolved path or mtime change — no time bucket, since
+    #    Expiry:  resolved path or modification_time change — no time bucket, since
     #             nothing writes the file at runtime.
     #    Used by: GetMcpTool (input to the tool-descriptions cache below);
     #             agent_network_structure_validation_middleware
@@ -119,7 +119,7 @@ class ProcessGlobals:  # pylint: disable=too-few-public-methods
     #    Holds:   the {server URL: tool descriptions} mapping fetched from
     #             the MCP servers themselves (network calls).
     #    Lives:   get_mcp_tool.GetMcpTool (async get_mcp_tool_descriptions)
-    #    Expiry:  mcp_info.hocon path/mtime change, or one
+    #    Expiry:  mcp_info.hocon path/modification_time change, or one
     #             AGENT_NETWORK_DESIGNER_MCP_TOOLS_TTL_SECONDS window
     #             (default 300s, clamped to at least twice the per-server
     #             fetch cap; <= 0 disables time-based refresh) — the

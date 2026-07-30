@@ -365,11 +365,11 @@ class TestSharedProcessCache(TestCase):
 
         self.assertEqual(asyncio.run(run()), "load-2")
 
-    def test_stat_mtime_ns_probes_without_raising(self):
-        """The mtime building block reports a bad path as None, per the fingerprint contract."""
-        self.assertIsNone(SharedProcessCache.stat_mtime_ns("/nonexistent/definitely/not/here"))
+    def test_stat_modification_time_ns_probes_without_raising(self):
+        """The modification_time building block reports a bad path as None, per the fingerprint contract."""
+        self.assertIsNone(SharedProcessCache.stat_modification_time_ns("/nonexistent/definitely/not/here"))
         with tempfile.NamedTemporaryFile() as probe:
-            self.assertIsInstance(SharedProcessCache.stat_mtime_ns(probe.name), int)
+            self.assertIsInstance(SharedProcessCache.stat_modification_time_ns(probe.name), int)
 
     def test_time_bucket_rolls_with_the_period_and_freezes_otherwise(self):
         """Positive periods roll once per period; zero, negative, and non-finite pin bucket 0."""

@@ -85,7 +85,7 @@ class GetSubnetwork(BranchActivation, CodedTool):
                 the server never picks up new manifest entries, a fresher
                 name list would only advertise networks that are not
                 reachable yet — so on a static server the cached list goes
-                static too (a manifest path or mtime change still refreshes
+                static too (a manifest path or modification_time change still refreshes
                 it). When updates are enabled, one manifest parse per period
                 (~15-20ms, off the event loop, and only if a caller actually
                 reads in that period) is the whole steady-state refresh cost.
@@ -104,8 +104,8 @@ class GetSubnetwork(BranchActivation, CodedTool):
         go stale:
 
         * the resolved path — an env-var change takes effect on the next read;
-        * the manifest file's mtime — a direct edit invalidates immediately, and
-          a missing manifest (mtime None) self-heals the moment the file appears;
+        * the manifest file's modification_time — a direct edit invalidates immediately, and
+          a missing manifest (modification_time None) self-heals the moment the file appears;
         * a time bucket that rolls once per manifest-update period (see
           _manifest_update_period_seconds) — the manifest composes other
           manifests via `include` (notably registries/generated/manifest.hocon,
@@ -114,14 +114,14 @@ class GetSubnetwork(BranchActivation, CodedTool):
           cannot see those included files, so the rolling bucket bounds that
           staleness instead. With updates disabled (period <= 0, the
           static-server default) the bucket is constant, so only a path or
-          mtime change invalidates.
+          modification_time change invalidates.
 
-        :return: (path, mtime_ns or None, time bucket) tuple.
+        :return: (path, modification_time_ns or None, time bucket) tuple.
         """
         manifest_file: str = GetSubnetwork._resolve_manifest_file()
-        mtime_ns: int | None = SharedProcessCache.stat_mtime_ns(manifest_file)
+        modification_time_ns: int | None = SharedProcessCache.stat_modification_time_ns(manifest_file)
         period: float = GetSubnetwork._manifest_update_period_seconds()
-        return (manifest_file, mtime_ns, SharedProcessCache.time_bucket(period))
+        return (manifest_file, modification_time_ns, SharedProcessCache.time_bucket(period))
 
     @staticmethod
     def _load_subnetwork_names() -> list[str]:
@@ -136,11 +136,11 @@ class GetSubnetwork(BranchActivation, CodedTool):
         :return: List of subnetwork name strings (in "/<network_name>" form).
                 A missing or unparseable manifest returns an empty list, which IS
                 published: unlike an immortal cache this entry expires on its own
-                (mtime change or manifest-update-period roll, whichever comes
+                (modification_time change or manifest-update-period roll, whichever comes
                 first), so a bad manifest cannot poison the process beyond one
                 refresh period — and publishing the empty result prevents a
                 per-call parse storm within it. (On a static server with
-                updates disabled, healing relies on the mtime/path change that
+                updates disabled, healing relies on the modification_time/path change that
                 fixing the manifest entails.)
         """
         manifest_file: str = GetSubnetwork._resolve_manifest_file()
@@ -203,7 +203,7 @@ class GetSubnetwork(BranchActivation, CodedTool):
     # caches, this source legitimately changes at runtime on local runs —
     # the designer saves every generated network into a manifest the top
     # file `include`s; server deployments persist elsewhere and never write
-    # it — so the fingerprint (path + mtime + a manifest-update-period
+    # it — so the fingerprint (path + modification_time + a manifest-update-period
     # bucket, see _manifest_fingerprint) keeps the list at most one
     # AGENT_MANIFEST_UPDATE_PERIOD_SECONDS period stale, the same cadence at
     # which the server itself picks up new manifest entries.
@@ -379,7 +379,7 @@ class GetSubnetwork(BranchActivation, CodedTool):
         :return: dict mapping "/<network_name>" -> description. An empty mapping
                 from an empty manifest IS returned, and therefore published: like
                 the names cache, it heals when the fingerprint changes — and the
-                manifest fix that emptiness calls for is itself an mtime change
+                manifest fix that emptiness calls for is itself a modification_time change
                 the fingerprint sees.
         :raises RuntimeError: when names exist but EVERY description fetch came
                 back empty — the signature of a fetch outage, whose recovery
