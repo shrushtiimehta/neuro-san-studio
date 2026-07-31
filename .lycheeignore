@@ -28,6 +28,7 @@ https://raw.githubusercontent.com/anthropics/skills/main/skills/internal-comms/
 https://api.anthropic.com/
 https://api.smith.langchain.com/
 https://api.salesforce.com
+https://build.nvidia.com/explore/discover
 
 # Ignores Jinja2 "{{.*}}" template pattern
 file://.*%7B%7B.*%7D%7D
