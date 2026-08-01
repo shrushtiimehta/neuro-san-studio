@@ -61,7 +61,8 @@ class NeuroSanStudioCli:  # pylint: disable=too-few-public-methods
         ),
     ) -> None:
         """Neuro SAN Studio CLI."""
-        ProjectEnvironment(os.getcwd()).load_env_file()
+        if os.path.isfile(".env"):
+            ProjectEnvironment(os.getcwd()).load_env_file()
 
     @staticmethod
     def _validate_run_flags(overrides: dict) -> None:
