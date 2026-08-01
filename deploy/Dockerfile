@@ -41,7 +41,6 @@ RUN pip3 install --upgrade pip==${PIP3_VERSION} --no-cache-dir ; mkdir -p ${APP_
 
 # Having a requirements.txt file for your coded_tool dependencies is optional
 COPY ./requirements.txt ${APP_SOURCE}/requirements.txt
-COPY ./neuro_san_studio/plugins/langfuse/requirements.txt ${APP_SOURCE}/neuro_san_studio/plugins/langfuse/requirements.txt
 
 # Move the work dir to the app source to find the requirements.
 WORKDIR ${APP_SOURCE}
@@ -50,12 +49,9 @@ RUN if [ -f ${APP_SOURCE}/requirements.txt ]; \
         pip install --prefix=/install --no-cache-dir -r ${APP_SOURCE}/requirements.txt ; \
     fi
 
-# Install plugin dependencies.
-# To install additional plugins, add more lines following this pattern:
-#   pip install --prefix=/install --no-cache-dir -r ${APP_SOURCE}/neuro_san_studio/plugins/<plugin>/requirements.txt
-# hadolint ignore=DL3059
-RUN pip install --prefix=/install --no-cache-dir \
-    -r ${APP_SOURCE}/neuro_san_studio/plugins/langfuse/requirements.txt
+# To install plugin dependencies, COPY the plugin's requirements file above and
+# add an install line following this pattern:
+#   RUN pip install --prefix=/install --no-cache-dir -r ${APP_SOURCE}/neuro_san_studio/plugins/<plugin>/requirements.txt
 
 # Reset to the root directory
 WORKDIR /
@@ -287,13 +283,12 @@ ENV AGENT_TRACING_METADATA_REQUEST_KEYS="request_id user_id"
 # Only environment variables that are set to something other than the empty string will be forwarded.
 ENV AGENT_TRACING_METADATA_ENV_VARS="POD_NAME POD_NAMESPACE POD_IP NODE_NAME"
 
-# Langfuse observability plugin.
-# See https://github.com/cognizant-ai-lab/neuro-san-studio/blob/main/neuro_san_studio/plugins/langfuse/README.md
-# for more details.
+# Langfuse observability.
+# Langfuse tracing is built into neuro-san itself; no plugin is required.
 
-# "true" or "false" to turn on/off the Langfuse plugin.
+# "true" or "false" to turn on/off Langfuse tracing.
 ENV LANGFUSE_ENABLED=""
-# The secrect and public keys for the Langfuse plugin.
+# The secret and public keys for Langfuse.
 # These can be found in your Langfuse account settings.
 ENV LANGFUSE_SECRET_KEY=""
 ENV LANGFUSE_PUBLIC_KEY=""

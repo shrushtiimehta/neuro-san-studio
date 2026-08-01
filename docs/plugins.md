@@ -127,9 +127,10 @@ providing comprehensive monitoring and analysis of LLM interactions.
 
 ### Langfuse
 
-The [Langfuse plugin](../neuro_san_studio/plugins/langfuse/README.md) integrates [Langfuse](https://langfuse.com/) for AI
-observability in Neuro SAN Studio, providing trace collection, cost tracking, and performance metrics
-for LLM interactions. It supports both cloud and self-hosted Langfuse instances.
+[Langfuse](https://langfuse.com/) tracing is built into Neuro SAN itself — no plugin is required. It provides
+trace collection, cost tracking, and performance metrics for LLM interactions, and supports both cloud and
+self-hosted Langfuse instances. Set `LANGFUSE_ENABLED=true` along with `LANGFUSE_SECRET_KEY`,
+`LANGFUSE_PUBLIC_KEY`, and (optionally) `LANGFUSE_HOST` in your `.env` file to enable it.
 
 ### LangSmith
 

@@ -270,7 +270,7 @@ class NeuroSanRunner:
                 self.server_process.terminate()
             else:
                 os.killpg(os.getpgid(self.server_process.pid), signal.SIGTERM)
-            # Wait for the server to finish cleanup (e.g. flushing Langfuse traces)
+            # Wait for the server to finish cleanup (e.g. flushing observability traces)
             self.server_process.wait(timeout=10)
 
         if self.nsflow_process:
