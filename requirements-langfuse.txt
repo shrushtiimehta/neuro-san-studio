@@ -1,0 +1,11 @@
+# Optional dependency for Langfuse observability, handled by neuro-san's
+# built-in tracing. Configure via environment variables (see .env.example):
+#   LANGFUSE_ENABLED=true
+#   LANGFUSE_SECRET_KEY=sk-lf-...
+#   LANGFUSE_PUBLIC_KEY=pk-lf-...
+#   LANGFUSE_HOST=https://us.cloud.langfuse.com  (optional)
+# Install with:
+#   pip install -r requirements-langfuse.txt
+# or
+#   pip install "neuro-san-studio[langfuse]"
+langfuse>=4.6.1,<5.0
