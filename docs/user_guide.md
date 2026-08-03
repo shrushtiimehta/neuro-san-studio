@@ -1390,7 +1390,8 @@ following methods.
 
 3. OAuth bearer-token flow (client-driven)
 
-    Rather than pasting a token, an agent network can **declare** which MCP server URLs need
+    Rather than passing a token in sly data directly or set it up as an environment variable in `MCP_SERVERS_INFO_FILE`,
+    an agent network can **declare** which MCP server URLs need
     `http_headers` and let a client that supports OAuth — such as
     [nsflow](https://github.com/cognizant-ai-lab/nsflow) — obtain the token and inject it into
     sly_data for you. The client runs the OAuth 2.1 authorization-code flow with PKCE (and Dynamic
