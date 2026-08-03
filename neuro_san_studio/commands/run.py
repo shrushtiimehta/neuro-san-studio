@@ -21,6 +21,7 @@ import socket
 import subprocess
 import sys
 import time
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
 from typing import Dict
@@ -67,6 +68,16 @@ class NeuroSanRunner:
         self.project_env = ProjectEnvironment(self.root_dir)
         # Load environment variables from the project .env file (if any)
         self.project_env.load_env_file()
+
+        # Fail fast on a misconfiguration that otherwise surfaces as per-request
+        # server errors and an nsflow client that hangs forever: neuro-san's
+        # built-in Langfuse tracing requires the optional langfuse package.
+        if os.getenv("LANGFUSE_ENABLED", "false").strip().lower() == "true" and find_spec("langfuse") is None:
+            sys.exit(
+                "LANGFUSE_ENABLED=true but the 'langfuse' package is not installed.\n"
+                "Install it with: pip install -r neuro_san_studio/plugins/langfuse/requirements.txt\n"
+                '(or: pip install "neuro-san-studio[langfuse]"), or set LANGFUSE_ENABLED=false.'
+            )
 
         plugins_file = PluginLoader.resolve_plugins_file(self.root_dir)
         self.plugin_classes = PluginLoader.load_plugin_classes(plugins_file)
@@ -270,7 +281,7 @@ class NeuroSanRunner:
                 self.server_process.terminate()
             else:
                 os.killpg(os.getpgid(self.server_process.pid), signal.SIGTERM)
-            # Wait for the server to finish cleanup (e.g. flushing Langfuse traces)
+            # Wait for the server to finish cleanup (e.g. flushing observability traces)
             self.server_process.wait(timeout=10)
 
         if self.nsflow_process:
