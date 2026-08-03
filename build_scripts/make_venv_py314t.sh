@@ -17,28 +17,23 @@
 # END COPYRIGHT
 
 # Create a local virtual environment for running/developing neuro-san-studio on
-# FREE-THREADED CPython 3.14t (no-GIL). This is the studio counterpart of
-# neuro-san's build_scripts/make_venv_py314t.sh and mirrors its choices:
+# FREE-THREADED CPython 3.14t (no-GIL).
 #
 #   * The free-threaded interpreter is provisioned with `uv` (there is no
 #     official python:3.14t image or, usually, a system 3.14t interpreter).
-#   * The in-house libraries leaf-common and leaf-server-common are built and
-#     installed FROM LOCAL SOURCE (never PyPI); leaf lines are stripped from
-#     requirements.txt so the resolver does not fetch them from the index.
-#     (leaf-common is a direct studio dep; leaf-server-common comes in via
-#     neuro-san -- we pin both from local source.)
+#   * All dependencies -- including leaf-common and neuro-san -- are installed
+#     from requirements.txt as-is (i.e. from PyPI).
 #   * orjson (transitive via neuro-san -> langsmith / langgraph-sdk) refuses to
 #     build under a free-threaded interpreter unless ORJSON_BUILD_FREETHREADED
 #     is set, so we set it.
 #
-# By default neuro-san is taken from PyPI exactly as studio's requirements.txt
-# pins it (neuro-san==<pinned>). Pass --local-neuro-san to instead build/install
-# neuro-san from the local ../neuro-san source tree (useful when you are testing
+# Pass --local-neuro-san to install neuro-san from the local ../neuro-san source
+# tree instead of the PyPI pin in requirements.txt (useful when testing
 # unreleased neuro-san changes under 3.14t).
 #
-# neuro-san-studio itself is NOT installed into the venv (that would pull the
-# in-house libs from PyPI); run it from the repo source via PYTHONPATH, exactly
-# as studio's Makefile / mknss01.sh do. Usage is printed at the end.
+# neuro-san-studio itself is NOT installed into the venv; run it from the repo
+# source via PYTHONPATH, as studio's Makefile / mknss01.sh do. Usage is printed
+# at the end.
 #
 # Usage:
 #   build_scripts/make_venv_py314t.sh [VENV_DIR] [--dev] [--local-neuro-san] [--force]
@@ -46,16 +41,15 @@
 #   VENV_DIR            Where to create the venv. Default: <repo>/.venv-py314t
 #   --dev              Also install requirements-build.txt (tests, linters).
 #                      These may hit additional cp314t source-build issues.
-#   --local-neuro-san  Build/install neuro-san from ../neuro-san source instead
-#                      of the PyPI pin in requirements.txt.
+#   --local-neuro-san  Install neuro-san from ../neuro-san source instead of the
+#                      PyPI pin in requirements.txt.
 #   --force            Recreate VENV_DIR if it already exists.
 #
 # Environment overrides:
-#   PYTHON_VERSION           interpreter to provision (default: 3.14t)
-#   LEAF_COMMON_DIR          path to local leaf-common       (default: ../leaf-common)
-#   LEAF_SERVER_COMMON_DIR   path to local leaf-server-common (default: ../leaf-server-common)
-#   NEURO_SAN_DIR            path to local neuro-san         (default: ../neuro-san)
-#   LEAF_COMMON_VERSION / LEAF_SERVER_COMMON_VERSION   pin the built leaf versions
+#   PY314T_PYTHON_VERSION    interpreter to provision (default: 3.14t). Named
+#                            specifically so it cannot collide with a generic
+#                            PYTHON_VERSION that may already be set in your shell.
+#   NEURO_SAN_DIR            path to local neuro-san    (default: ../neuro-san)
 #   AUTO_INSTALL_UV=1        install uv automatically if it is missing
 #   AUTO_INSTALL_RUST=1      install a Rust toolchain (rustup) automatically if missing
 
@@ -64,9 +58,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-PYTHON_VERSION="${PYTHON_VERSION:-3.14t}"
-LEAF_COMMON_DIR="${LEAF_COMMON_DIR:-${REPO_ROOT}/../leaf-common}"
-LEAF_SERVER_COMMON_DIR="${LEAF_SERVER_COMMON_DIR:-${REPO_ROOT}/../leaf-server-common}"
+PY314T_PYTHON_VERSION="${PY314T_PYTHON_VERSION:-3.14t}"
 NEURO_SAN_DIR="${NEURO_SAN_DIR:-${REPO_ROOT}/../neuro-san}"
 
 VENV_DIR=""
@@ -85,7 +77,7 @@ function parse_args() {
             --local-neuro-san) LOCAL_NEURO_SAN=1 ;;
             --force)           FORCE=1 ;;
             -h|--help)
-                sed -n '18,63p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+                sed -n '18,54p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
                 exit 0
                 ;;
             --*) die "unknown option: ${arg}" ;;
@@ -142,27 +134,10 @@ function ensure_build_toolchain() {
     fi
 }
 
-function derive_version() {
-    local repo_dir="$1"
-    local default_version="$2"
-    local described
-    described="$(git -C "${repo_dir}" describe --tags --abbrev=0 2>/dev/null || true)"
-    described="$(echo "${described}" | sed -E 's/^v//; s/^([0-9]+(\.[0-9]+)*).*/\1/')"
-    if [ -n "${described}" ]; then
-        echo "${described}"
-    else
-        echo "${default_version}"
-    fi
-}
-
 function main() {
     parse_args "$@"
 
     [ -f "${REPO_ROOT}/requirements.txt" ] || die "no requirements.txt at repo root ${REPO_ROOT}"
-    for d in "${LEAF_COMMON_DIR}" "${LEAF_SERVER_COMMON_DIR}"; do
-        [ -f "${d}/pyproject.toml" ] || die "local dependency source not found at '${d}' (no pyproject.toml).
-   Set LEAF_COMMON_DIR / LEAF_SERVER_COMMON_DIR to point at the local repos."
-    done
     if [ "${LOCAL_NEURO_SAN}" = 1 ] && [ ! -f "${NEURO_SAN_DIR}/requirements.txt" ]; then
         die "--local-neuro-san given but no neuro-san source at '${NEURO_SAN_DIR}'. Set NEURO_SAN_DIR."
     fi
@@ -170,17 +145,11 @@ function main() {
     ensure_uv
     ensure_build_toolchain
 
-    local leaf_common_version leaf_server_common_version
-    leaf_common_version="${LEAF_COMMON_VERSION:-$(derive_version "${LEAF_COMMON_DIR}" "1.2.43")}"
-    leaf_server_common_version="${LEAF_SERVER_COMMON_VERSION:-$(derive_version "${LEAF_SERVER_COMMON_DIR}" "0.1.17")}"
-
-    log "repo root                : ${REPO_ROOT}"
-    log "venv dir                 : ${VENV_DIR}"
-    log "python                   : ${PYTHON_VERSION} (free-threaded)"
-    log "leaf-common source       : ${LEAF_COMMON_DIR} (as ${leaf_common_version})"
-    log "leaf-server-common source: ${LEAF_SERVER_COMMON_DIR} (as ${leaf_server_common_version})"
-    log "neuro-san source         : $([ "${LOCAL_NEURO_SAN}" = 1 ] && echo "${NEURO_SAN_DIR} (local)" || echo "PyPI pin from requirements.txt")"
-    log "install build/dev reqs   : $([ "${WITH_DEV}" = 1 ] && echo yes || echo no)"
+    log "repo root              : ${REPO_ROOT}"
+    log "venv dir               : ${VENV_DIR}"
+    log "python                 : ${PY314T_PYTHON_VERSION} (free-threaded)"
+    log "neuro-san source       : $([ "${LOCAL_NEURO_SAN}" = 1 ] && echo "${NEURO_SAN_DIR} (local)" || echo "PyPI pin from requirements.txt")"
+    log "install build/dev reqs : $([ "${WITH_DEV}" = 1 ] && echo yes || echo no)"
 
     if [ -e "${VENV_DIR}" ]; then
         if [ "${FORCE}" = 1 ]; then
@@ -192,38 +161,44 @@ function main() {
     fi
 
     # 1. Provision the free-threaded interpreter and create the venv.
-    log "installing free-threaded CPython ${PYTHON_VERSION} via uv..."
-    uv python install "${PYTHON_VERSION}"
+    log "installing free-threaded CPython ${PY314T_PYTHON_VERSION} via uv..."
+    uv python install "${PY314T_PYTHON_VERSION}"
 
     log "creating venv at ${VENV_DIR}..."
-    uv venv --python "${PYTHON_VERSION}" --seed "${VENV_DIR}"
+    uv venv --python "${PY314T_PYTHON_VERSION}" --seed "${VENV_DIR}"
 
     local venv_python="${VENV_DIR}/bin/python"
 
-    # 2. Build a stripped requirements file: always drop the in-house leaf lines;
-    #    also drop the neuro-san pin when installing neuro-san from local source.
-    local strip_re='^[[:space:]]*(leaf-common|leaf-server-common)([[:space:]]|[<>=!~;[]|$)'
-    if [ "${LOCAL_NEURO_SAN}" = 1 ]; then
-        strip_re='^[[:space:]]*(leaf-common|leaf-server-common|neuro-san)([[:space:]]|[<>=!~;[]|$)'
+    # Fail loudly if uv did NOT give us a free-threaded interpreter, so a silent
+    # fallback to a regular GIL build (e.g. because the requested version resolved
+    # to a non-free-threaded interpreter) can never pass as a successful run.
+    if ! "${venv_python}" -c "import sysconfig, sys; sys.exit(0 if sysconfig.get_config_var('Py_GIL_DISABLED') else 1)"; then
+        local got
+        got="$("${venv_python}" -c 'import sys; print(sys.version.split()[0])')"
+        die "venv interpreter is ${got}, NOT a free-threaded build.
+   uv resolved '${PY314T_PYTHON_VERSION}' to a regular GIL interpreter. Check that
+   PY314T_PYTHON_VERSION (and any UV_PYTHON / .python-version) name a free-threaded
+   interpreter such as 3.14t, and that no stray override is in effect."
     fi
-    local req_nolocal
-    req_nolocal="$(mktemp)"
-    # shellcheck disable=SC2064
-    trap "rm -f '${req_nolocal}'" EXIT
-    grep -viE "${strip_re}" "${REPO_ROOT}/requirements.txt" > "${req_nolocal}"
+    log "confirmed free-threaded interpreter: $("${venv_python}" -c 'import sys; print(sys.version.split()[0])')"
 
-    # 3. Assemble the install set:
-    #    - local leaf sources as paths (pinned; never from PyPI)
-    #    - optionally local neuro-san source as a path
-    #    - the stripped studio requirements
-    local -a install_args=(
-        "${LEAF_COMMON_DIR}"
-        "${LEAF_SERVER_COMMON_DIR}"
-    )
+    # 2. Assemble the requirements to install. By default everything -- including
+    #    leaf-common and neuro-san -- comes from requirements.txt (i.e. PyPI).
+    #    With --local-neuro-san, the neuro-san pin is stripped and neuro-san is
+    #    installed from local source instead.
+    local -a install_args=()
+    local req_file="${REPO_ROOT}/requirements.txt"
+    local req_tmp=""
     if [ "${LOCAL_NEURO_SAN}" = 1 ]; then
+        req_tmp="$(mktemp)"
+        # shellcheck disable=SC2064
+        trap "rm -f '${req_tmp}'" EXIT
+        grep -viE '^[[:space:]]*neuro-san([[:space:]]|[<>=!~;[]|$)' \
+            "${REPO_ROOT}/requirements.txt" > "${req_tmp}"
+        req_file="${req_tmp}"
         install_args+=("${NEURO_SAN_DIR}")
     fi
-    install_args+=(-r "${req_nolocal}")
+    install_args+=(-r "${req_file}")
     if [ "${WITH_DEV}" = 1 ]; then
         if [ -f "${REPO_ROOT}/requirements-build.txt" ]; then
             install_args+=(-r "${REPO_ROOT}/requirements-build.txt")
@@ -234,11 +209,9 @@ function main() {
 
     log "installing dependencies (this compiles orjson and possibly others for cp314t)..."
     ORJSON_BUILD_FREETHREADED=1 \
-    SETUPTOOLS_SCM_PRETEND_VERSION_FOR_LEAF_COMMON="${leaf_common_version}" \
-    SETUPTOOLS_SCM_PRETEND_VERSION_FOR_LEAF_SERVER_COMMON="${leaf_server_common_version}" \
         uv pip install --python "${venv_python}" "${install_args[@]}"
 
-    # 4. Sanity check.
+    # 3. Sanity check.
     log "verifying environment..."
     PYTHONPATH="${REPO_ROOT}" "${venv_python}" - <<'PY'
 import sys
@@ -246,9 +219,8 @@ print("  python              :", sys.version.split()[0], "(" + sys.executable + 
 gil = getattr(sys, "_is_gil_enabled", None)
 print("  free-threaded build :", bool(__import__("sysconfig").get_config_var("Py_GIL_DISABLED")))
 print("  GIL enabled now     :", gil() if gil else "n/a")
-import leaf_common, leaf_server_common, neuro_san
+import leaf_common, neuro_san
 print("  leaf_common         : OK")
-print("  leaf_server_common  : OK")
 print("  neuro_san           : OK")
 import neuro_san_studio
 print("  neuro_san_studio    : OK (from repo source)")
