@@ -1395,7 +1395,7 @@ following methods.
     [nsflow](https://github.com/cognizant-ai-lab/nsflow) — obtain the token and inject it into
     sly_data for you. The client runs the OAuth 2.1 authorization-code flow with PKCE (and Dynamic
     Client Registration where the server supports it), keeps the token on the backend, and at chat
-    time injects `sly_data.http_headers["<MCP_URL>"] = {"Authorization": "Bearer <token>"}`.
+    time injects `sly_data["http_headers"]["<MCP_URL>"] = {"Authorization": "Bearer <token>"}`.
     Tokens are never shown to the LLM or stored in the network.
 
     Declare the expected shape under the agent `function` using `sly_data_schema`:
