@@ -32,8 +32,7 @@
 # unreleased neuro-san changes under 3.14t).
 #
 # neuro-san-studio itself is NOT installed into the venv; run it from the repo
-# source via PYTHONPATH, as studio's Makefile / mknss01.sh do. Usage is printed
-# at the end.
+# source via PYTHONPATH, as studio's Makefile does. Usage is printed at the end.
 #
 # Usage:
 #   build_scripts/make_venv_py314t.sh [VENV_DIR] [--dev] [--local-neuro-san] [--force]
@@ -153,8 +152,11 @@ function main() {
 
     if [ -e "${VENV_DIR}" ]; then
         if [ "${FORCE}" = 1 ]; then
+            case "${VENV_DIR}" in
+                ""|"/"|"."|".."|"${REPO_ROOT}") die "refusing to remove unsafe VENV_DIR='${VENV_DIR}'" ;;
+            esac
             log "removing existing ${VENV_DIR} (--force)"
-            rm -rf "${VENV_DIR}"
+            rm -rf -- "${VENV_DIR}"
         else
             die "${VENV_DIR} already exists. Pass --force to recreate, or choose another VENV_DIR."
         fi
