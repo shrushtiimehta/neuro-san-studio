@@ -127,11 +127,14 @@ providing comprehensive monitoring and analysis of LLM interactions.
 
 ### Langfuse
 
-[Langfuse](https://langfuse.com/) tracing is built into Neuro SAN itself — no plugin is required. It provides
-trace collection, cost tracking, and performance metrics for LLM interactions, and supports both cloud and
-self-hosted Langfuse instances. To use it, install the optional dependency
-(`pip install -r requirements-langfuse.txt`) and set `LANGFUSE_ENABLED=true` along with
-`LANGFUSE_SECRET_KEY`, `LANGFUSE_PUBLIC_KEY`, and (optionally) `LANGFUSE_HOST` in your `.env` file.
+The [Langfuse integration](../neuro_san_studio/plugins/langfuse/README.md) provides
+[Langfuse](https://langfuse.com/) observability for Neuro SAN Studio: trace collection, cost tracking, and
+performance metrics for LLM interactions, with support for both cloud and self-hosted Langfuse instances.
+Langfuse tracing is built into Neuro SAN itself — no plugin class is required. To use it, install the
+optional dependency (`pip install -r neuro_san_studio/plugins/langfuse/requirements.txt`) and set
+`LANGFUSE_ENABLED=true` along with `LANGFUSE_SECRET_KEY`, `LANGFUSE_PUBLIC_KEY`, and (optionally)
+`LANGFUSE_HOST` in your `.env` file. See the [README](../neuro_san_studio/plugins/langfuse/README.md) for
+the full configuration reference and troubleshooting.
 
 ### LangSmith
 

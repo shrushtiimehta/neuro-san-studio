@@ -41,7 +41,7 @@ RUN pip3 install --upgrade pip==${PIP3_VERSION} --no-cache-dir ; mkdir -p ${APP_
 
 # Having a requirements.txt file for your coded_tool dependencies is optional
 COPY ./requirements.txt ${APP_SOURCE}/requirements.txt
-COPY ./requirements-langfuse.txt ${APP_SOURCE}/requirements-langfuse.txt
+COPY ./neuro_san_studio/plugins/langfuse/requirements.txt ${APP_SOURCE}/neuro_san_studio/plugins/langfuse/requirements.txt
 
 # Move the work dir to the app source to find the requirements.
 WORKDIR ${APP_SOURCE}
@@ -56,7 +56,7 @@ RUN if [ -f ${APP_SOURCE}/requirements.txt ]; \
 # To install other optional or plugin dependencies, follow the same pattern.
 # hadolint ignore=DL3059
 RUN pip install --prefix=/install --no-cache-dir \
-    -r ${APP_SOURCE}/requirements-langfuse.txt
+    -r ${APP_SOURCE}/neuro_san_studio/plugins/langfuse/requirements.txt
 
 # Reset to the root directory
 WORKDIR /
