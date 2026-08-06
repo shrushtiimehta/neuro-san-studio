@@ -258,11 +258,11 @@ class TestGetMcpServersAuthInfo(TestCase):
         GetMcpTool.clear_shared_mcp_servers_for_testing()
         GetMcpTool.clear_shared_mcp_tool_descriptions_for_testing()
 
-    def test_file_headers_mean_no_client_token_is_needed(self):
-        """Servers authenticated via mcp_info.hocon http_headers are not gated."""
+    def test_info_file_servers_need_no_client_token(self):
+        """mcp_info.hocon servers are a server-side concern — with headers or without."""
         info = {
             MCP_SERVERS[0]: {"http_headers": {"X-Api-Key": "from-env"}},
-            MCP_SERVERS[1]: {},  # configured, but no headers: needs a client token
+            MCP_SERVERS[1]: {},  # public/no-auth file server: still not a client concern
         }
         with tempfile.TemporaryDirectory() as storage_dir:
             write_token_store(storage_dir, {"https://oauth-only.example/mcp": {"tokens": {"access_token": "tok"}}})
@@ -276,15 +276,15 @@ class TestGetMcpServersAuthInfo(TestCase):
             auth_info,
             {
                 MCP_SERVERS[0]: False,
-                MCP_SERVERS[1]: True,
+                MCP_SERVERS[1]: False,
                 "https://oauth-only.example/mcp": True,
             },
         )
         for value in auth_info.values():
             self.assertIsInstance(value, bool)
 
-    def test_a_stored_token_does_not_flip_a_file_authenticated_server(self):
-        """A URL in both sources keeps needs_client_token=False: file auth suffices."""
+    def test_a_stored_token_does_not_flip_an_info_file_server(self):
+        """A URL in both sources stays a server-side concern (no client gating)."""
         info = {MCP_SERVERS[0]: {"http_headers": {"Authorization": "Bearer from-env"}}}
         with tempfile.TemporaryDirectory() as storage_dir:
             write_token_store(storage_dir, {MCP_SERVERS[0]: {"tokens": {"access_token": "tok"}}})

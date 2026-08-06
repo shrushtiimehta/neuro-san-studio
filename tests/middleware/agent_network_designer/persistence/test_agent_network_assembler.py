@@ -22,7 +22,8 @@ OAUTH_URL = "https://oauth.example.com/mcp"
 FILE_AUTH_URL = "https://file-auth.example.com/mcp"
 UNUSED_URL = "https://unused.example.com/mcp"
 
-# needs_client_token per server, as GetMcpTool.get_mcp_servers_auth_info returns it.
+# needs_client_token per server, as GetMcpTool.get_mcp_servers_auth_info returns
+# it: True iff the server is known only from nsflow's OAuth token store.
 MCP_SERVERS_AUTH: dict[str, bool] = {OAUTH_URL: True, FILE_AUTH_URL: False, UNUSED_URL: True}
 
 NETWORK_DEF: dict = {
@@ -60,23 +61,24 @@ class TestBuildMcpSlyDataSchema:
         assert schema["required"] == ["http_headers"]
         http_headers = schema["properties"]["http_headers"]
         assert http_headers["type"] == "object"
-        # Every USED url is declared (opportunistic injection)...
-        assert sorted(http_headers["properties"]) == sorted([OAUTH_URL, FILE_AUTH_URL])
+        # Only the client-token (token-store) url is declared...
+        assert list(http_headers["properties"]) == [OAUTH_URL]
         # ...and each declared url expects an Authorization header.
         for url_schema in http_headers["properties"].values():
             assert url_schema["required"] == ["Authorization"]
             assert url_schema["properties"]["Authorization"]["type"] == "string"
 
-    def test_required_is_the_headerless_subset_of_used_urls(self):
-        """Only servers needing a client token gate chat; file-auth ones do not."""
+    def test_only_token_store_servers_are_declared_and_required(self):
+        """mcp_info.hocon servers are omitted; every declared URL gates chat."""
         schema = AgentNetworkAssembler.build_mcp_sly_data_schema(NETWORK_DEF, MCP_SERVERS_AUTH)
-        assert schema["properties"]["http_headers"]["required"] == [OAUTH_URL]
+        http_headers = schema["properties"]["http_headers"]
+        assert FILE_AUTH_URL not in http_headers["properties"]
+        assert http_headers["required"] == [OAUTH_URL]
 
-    def test_required_is_emitted_even_when_empty(self):
-        """Omitting `required` makes nsflow gate every declared URL; [] must be explicit."""
+    def test_a_network_using_only_info_file_servers_gets_no_schema(self):
+        """File-configured servers need no client input, so no schema is emitted."""
         network_def = {"front_man": {"instructions": "Go.", "tools": [FILE_AUTH_URL]}}
-        schema = AgentNetworkAssembler.build_mcp_sly_data_schema(network_def, MCP_SERVERS_AUTH)
-        assert schema["properties"]["http_headers"]["required"] == []
+        assert AgentNetworkAssembler.build_mcp_sly_data_schema(network_def, MCP_SERVERS_AUTH) is None
 
     def test_unused_servers_are_not_declared(self):
         """Only URLs the network references appear in the schema."""

@@ -103,7 +103,7 @@ class ProcessGlobals:  # pylint: disable=too-few-public-methods
     #    Used by: GetSubnetwork.get_subnetworks() (the coded tool path).
     #
     # 5. Shared MCP servers
-    #    Holds:   the {server URL: {"has_file_headers", "access_token"}}
+    #    Holds:   the {server URL: {"in_info_file", "access_token"}}
     #             union of the servers parsed from mcp_info.hocon
     #             (MCP_SERVERS_INFO_FILE, the cwd scaffold, or the bundled
     #             copy — see GetMcpTool.get_mcp_info_file) and the OAuth

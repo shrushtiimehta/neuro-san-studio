@@ -59,19 +59,20 @@ class AgentNetworkAssembler:
         Generic clients read this schema to learn what private inputs to
         supply outside the chat stream. In particular, nsflow reads
         properties.http_headers.properties to know which MCP server URLs to
-        opportunistically inject stored OAuth bearer tokens for (as
+        inject stored OAuth bearer tokens for (as
         sly_data["http_headers"][<url>]["Authorization"]), and
         properties.http_headers.required to know which of them must be
         connected before chat is allowed. See registries/tools/you_search.hocon
         for the hand-written reference of this exact shape.
 
-        The `required` list is data-driven: a URL is required only when it
-        needs a client-supplied token (no http_headers configured for it in
-        mcp_info.hocon — the mapping computed by
-        GetMcpTool.get_mcp_servers_auth_info). The key is always emitted,
-        even when empty: omitting `required` makes nsflow gate every
-        declared URL, while [] disables the gate but keeps opportunistic
-        token injection.
+        Only servers that need a client-supplied token are declared — those
+        known from nsflow's OAuth token store rather than mcp_info.hocon
+        (the mapping computed by GetMcpTool.get_mcp_servers_auth_info).
+        Servers configured in mcp_info.hocon are omitted entirely: their
+        auth (if any) lives server-side, so a client has nothing to supply
+        for them — matching you_search.hocon, which declares only its OAuth
+        server. Every declared URL is also in `required`, so clients like
+        nsflow gate chat until the user has connected it.
 
         :param network_def: Agent network definition. MCP server URLs are
                 recognized as tools-list entries present in mcp_servers_auth —
@@ -80,19 +81,20 @@ class AgentNetworkAssembler:
         :param mcp_servers_auth: {MCP server URL: needs_client_token} for every
                 known MCP server, or None.
         :return: The sly_data_schema dict, or None when the network uses no
-                MCP servers (no schema should be emitted at all).
+                client-token MCP servers (no schema should be emitted at all).
         """
         if not mcp_servers_auth:
             return None
 
-        # Collect the MCP URLs the network actually uses, deduped in
-        # first-appearance order so the emitted schema is deterministic.
+        # Collect the client-token MCP URLs the network actually uses,
+        # deduped in first-appearance order so the emitted schema is
+        # deterministic.
         used_urls: dict[str, None] = {}
         for agent in network_def.values():
             if not isinstance(agent, dict):
                 continue
             for tool in agent.get("tools") or []:
-                if isinstance(tool, str) and tool in mcp_servers_auth:
+                if isinstance(tool, str) and mcp_servers_auth.get(tool):
                     used_urls[tool] = None
         if not used_urls:
             return None
@@ -118,7 +120,7 @@ class AgentNetworkAssembler:
                     "type": "object",
                     "description": "HTTP headers to be sent with MCP tool requests.",
                     "properties": url_properties,
-                    "required": [url for url in used_urls if mcp_servers_auth.get(url)],
+                    "required": list(used_urls),
                 }
             },
             "required": ["http_headers"],

@@ -58,7 +58,7 @@ class TestDeployableAssemblerSlyDataSchema:
         front_man = agent_network["tools"][0]
         assert front_man["name"] == "front_man"
         http_headers = front_man["function"]["sly_data_schema"]["properties"]["http_headers"]
-        assert sorted(http_headers["properties"]) == sorted([OAUTH_URL, FILE_AUTH_URL])
+        assert list(http_headers["properties"]) == [OAUTH_URL]
         assert http_headers["required"] == [OAUTH_URL]
         # The description injection it sits next to still happened.
         assert front_man["function"]["description"] == "top"

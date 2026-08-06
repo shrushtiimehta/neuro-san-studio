@@ -214,10 +214,10 @@ class GetMcpTool(CodedTool):
 
         :return: The UNION of mcp_info.hocon entries and nsflow token-store
                 entries holding an access token, as
-                {server URL: {"has_file_headers": bool, "access_token": str | None}}.
-                has_file_headers records whether mcp_info.hocon configures
-                http_headers for the URL (i.e. the server is authenticated
-                file-side and needs no client-supplied token); access_token
+                {server URL: {"in_info_file": bool, "access_token": str | None}}.
+                in_info_file records whether the URL is configured in
+                mcp_info.hocon (its auth — if any — is a server-side
+                concern: file/env headers, or none needed); access_token
                 is the nsflow OAuth bearer token when one is stored. A
                 missing, unreadable, or unparseable mcp_info.hocon degrades
                 to the token-store half alone, which IS published: the
@@ -240,12 +240,8 @@ class GetMcpTool(CodedTool):
             if info is None:
                 logger.warning("MCP servers info file not found at %s. No MCP Servers will be used.", mcp_info_file)
                 info = {}
-            for server_url, spec in info.items():
-                headers: Any = spec.get("http_headers") if isinstance(spec, dict) else None
-                infos[server_url] = {
-                    "has_file_headers": isinstance(headers, dict) and bool(headers),
-                    "access_token": None,
-                }
+            for server_url in info:
+                infos[server_url] = {"in_info_file": True, "access_token": None}
         except (OSError, ValueError) as error:
             # neuro-san re-wraps HOCON parse errors as ValueError; OSError
             # covers a file that exists but cannot be read (permissions, I/O
@@ -255,11 +251,11 @@ class GetMcpTool(CodedTool):
             logger.warning("Failed to read MCP servers info file %s: %s", mcp_info_file, error)
 
         # Overlay nsflow's OAuth connections. A URL present in both sources
-        # keeps has_file_headers=True and gains the token: the token wins at
-        # fetch time (mirroring runtime sly_data-over-file precedence), while
-        # has_file_headers still marks the server as usable without one.
+        # keeps in_info_file=True and gains the token: the token wins at
+        # fetch time, while in_info_file still marks the server as a
+        # server-side auth concern (not declared in generated schemas).
         for server_url, access_token in GetMcpTool._load_storage_access_tokens().items():
-            entry: dict[str, Any] = infos.setdefault(server_url, {"has_file_headers": False, "access_token": None})
+            entry: dict[str, Any] = infos.setdefault(server_url, {"in_info_file": False, "access_token": None})
             entry["access_token"] = access_token
         return infos
 
@@ -535,11 +531,14 @@ class GetMcpTool(CodedTool):
     async def get_mcp_servers_auth_info() -> dict[str, bool]:
         """
         Get, for every known MCP server URL, whether it needs a
-        client-supplied token: True iff mcp_info.hocon configures no
-        http_headers for it (servers known only from nsflow's OAuth token
-        store are therefore always True). Used to build the data-driven
-        `required` list of the sly_data_schema emitted into generated
-        agent networks.
+        client-supplied token: True iff the server is known only from
+        nsflow's OAuth token store — the user connected it via OAuth, so
+        its auth is client-side and generated networks must declare it in
+        their sly_data_schema. Servers listed in mcp_info.hocon are False:
+        their auth (if any) is configured server-side, or they need none,
+        so clients have nothing to supply and generated schemas omit them
+        entirely. (Consequently a client-token OAuth server belongs in the
+        token store, not headerless in the info file.)
 
         Same cache and fingerprint as get_mcp_servers(), so the two views
         are always consistent. Values are bools only — no token material
@@ -549,10 +548,7 @@ class GetMcpTool(CodedTool):
                 may mutate it without corrupting the shared cache.
         """
         infos: dict[str, dict[str, Any]] = await GetMcpTool._shared_mcp_servers_cache.aget()
-        return {
-            server_url: not (isinstance(entry, dict) and entry.get("has_file_headers"))
-            for server_url, entry in infos.items()
-        }
+        return {server_url: not entry["in_info_file"] for server_url, entry in infos.items()}
 
     @staticmethod
     async def get_mcp_tool_descriptions() -> dict[str, str]:

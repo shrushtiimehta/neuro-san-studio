@@ -76,9 +76,9 @@ class TestHoconAssemblerSlyDataSchema:
         front_man = config["tools"][0]
         assert front_man["name"] == "front_man"
         http_headers = front_man["function"]["sly_data_schema"]["properties"]["http_headers"]
-        # Both used URLs are declared; only the token-needing one is required.
+        # Only the client-token URL is declared, and it is required.
         url_properties = {unquote(url): value for url, value in http_headers["properties"].items()}
-        assert sorted(url_properties) == sorted([OAUTH_URL, FILE_AUTH_URL])
+        assert list(url_properties) == [OAUTH_URL]
         assert list(http_headers["required"]) == [OAUTH_URL]
         assert list(url_properties[OAUTH_URL]["required"]) == ["Authorization"]
         # The description substitution still landed alongside the schema.
