@@ -147,9 +147,9 @@ ENV UV_PYTHON_INSTALL_DIR="${PYTHON_INSTALL_DIR}"
 ENV VIRTUAL_ENV="${VENV_DIR}"
 ENV UV_NO_CACHE=1
 
+# --seed puts pip/setuptools in the venv so the runtime entrypoint's
+# `pip3 --version`/`pip3 freeze` diagnostics keep working.
 RUN uv python install "${PYTHON_VERSION}" \
-    # --seed puts pip/setuptools in the venv so the runtime entrypoint's
-    # `pip3 --version`/`pip3 freeze` diagnostics keep working.
     && uv venv --python "${PYTHON_VERSION}" --seed "${VENV_DIR}" \
     && "${VENV_DIR}/bin/python" -c "import sys; print('python', sys.version); print('gil_enabled =', getattr(sys, '_is_gil_enabled', lambda: 'n/a')())"
 
