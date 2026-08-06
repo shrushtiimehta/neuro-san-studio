@@ -324,12 +324,17 @@ class TestGetMcpToolDescriptions(TestCase):
 
         return mock.patch.object(GetMcpTool, "_fetch_tool_descriptions", new=fake_fetch)
 
-    def _patched_servers(self, servers: list[str] | None = None, tokens: dict[str, str] | None = None):
+    def _patched_servers(
+        self,
+        servers: list[str] | None = None,
+        tokens: dict[str, str] | None = None,
+        in_info_file: bool = False,
+    ):
         """Pin the servers half so these tests never read the real config file."""
         pinned = MCP_SERVERS if servers is None else servers
         tokens = tokens or {}
         infos: dict[str, dict] = {
-            server: {"has_file_headers": False, "access_token": tokens.get(server)} for server in pinned
+            server: {"in_info_file": in_info_file, "access_token": tokens.get(server)} for server in pinned
         }
         return mock.patch.object(GetMcpTool._shared_mcp_servers_cache, "get", new=mock.Mock(return_value=infos))
 
@@ -436,6 +441,21 @@ class TestGetMcpToolDescriptions(TestCase):
         self.assertIsNone(self.headers_log[MCP_SERVERS[1]])
         # The token itself never surfaces in what the LLM will see.
         self.assertNotIn("tok-0", str(result))
+
+    def test_an_info_file_server_ignores_a_stored_token(self):
+        """File-configured servers keep their (refreshable) file auth: a leftover
+        stored token could be stale and would hide the server on a 401."""
+        tokens = {server: f"tok-{i}" for i, server in enumerate(MCP_SERVERS)}
+
+        with (
+            mock.patch.dict(os.environ, {TTL_ENV: "100000"}),
+            self._patched_servers(tokens=tokens, in_info_file=True),
+            self._patched_fetches(),
+        ):
+            asyncio.run(GetMcpTool.get_mcp_tool_descriptions())
+
+        for server in MCP_SERVERS:
+            self.assertIsNone(self.headers_log[server])
 
     def test_registry_covers_both_mcp_caches(self):
         """globals' REGISTRY triples must resolve now that get_mcp_tool is imported."""

@@ -419,10 +419,15 @@ class GetMcpTool(CodedTool):
         fetch_timeout: float | None = GetMcpTool._mcp_tools_fetch_timeout_seconds()
         coroutines: list[Any] = []
         for server, entry in server_infos.items():
-            access_token: Any = entry.get("access_token") if isinstance(entry, dict) else None
-            # A stored nsflow OAuth token is sent as the Authorization
-            # header and takes precedence over any file-configured headers
-            # (headers=None falls back to those inside the adapter).
+            # A stored nsflow OAuth token authenticates only servers known
+            # solely from the token store. Servers configured in
+            # mcp_info.hocon keep headers=None so the adapter falls back to
+            # their file-configured headers (or none, for public servers):
+            # the file side is the working, refreshable credential there,
+            # while a leftover stored token can be stale — this path cannot
+            # refresh it — and sending it instead would replace working
+            # auth and hide the server on a 401 (attempt-and-drop).
+            access_token: Any = None if entry["in_info_file"] else entry["access_token"]
             headers: dict[str, str] | None = {"Authorization": f"Bearer {access_token}"} if access_token else None
             coroutines.append(GetMcpTool._fetch_tool_descriptions(server, fetch_timeout, headers))
         # return_exceptions=False is safe here because
