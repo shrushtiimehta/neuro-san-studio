@@ -28,16 +28,19 @@ export SERVICE_VERSION=${SERVICE_VERSION:-0.0.1}
     # Environment file should be a simple text file with lines of the form:
     #   VAR_NAME=VAR_VALUE
     # This allows us to pass in any collection of run-specific values
-    env_file_cmd=""
-    if [[ -n "${SERVICE_ENV_FILE:-}" && -f "$SERVICE_ENV_FILE" ]]; then
-        echo "Using service environment file: $SERVICE_ENV_FILE"
-        cat "$SERVICE_ENV_FILE"
-        env_file_cmd="--env-file $SERVICE_ENV_FILE"
-    elif [[ -z "${SERVICE_ENV_FILE:-}" ]]; then
-        echo "SERVICE_ENV_FILE is not set."
-    else
-        echo "WARNING: '$SERVICE_ENV_FILE' does not exist."
+env_file_cmd=""
+if [[ -n "${SERVICE_ENV_FILE:-}" && -f "$SERVICE_ENV_FILE" ]]; then
+    if [[ "$SERVICE_ENV_FILE" =~ [[:space:]] ]]; then
+        echo "ERROR: SERVICE_ENV_FILE path contains whitespace; please use a path without spaces: '$SERVICE_ENV_FILE'" >&2
+        exit 1
     fi
+    echo "Using service environment file: $SERVICE_ENV_FILE"
+    env_file_cmd="--env-file $SERVICE_ENV_FILE"
+elif [[ -z "${SERVICE_ENV_FILE:-}" ]]; then
+    echo "SERVICE_ENV_FILE is not set."
+else
+    echo "WARNING: '$SERVICE_ENV_FILE' does not exist."
+fi
 
 function check_directory() {
     working_dir=$(pwd)
