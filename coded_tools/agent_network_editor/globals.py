@@ -103,23 +103,33 @@ class ProcessGlobals:  # pylint: disable=too-few-public-methods
     #    Used by: GetSubnetwork.get_subnetworks() (the coded tool path).
     #
     # 5. Shared MCP servers
-    #    Holds:   the list of MCP server URLs parsed from mcp_info.hocon
+    #    Holds:   the {server URL: {"has_file_headers", "access_token"}}
+    #             union of the servers parsed from mcp_info.hocon
     #             (MCP_SERVERS_INFO_FILE, the cwd scaffold, or the bundled
-    #             copy — see GetMcpTool.get_mcp_info_file).
-    #    Lives:   get_mcp_tool.GetMcpTool (async get_mcp_servers)
-    #    Expiry:  resolved path or modification_time change — no time bucket, since
-    #             nothing writes the file at runtime.
+    #             copy — see GetMcpTool.get_mcp_info_file) and the OAuth
+    #             connections in nsflow's token store
+    #             (NSFLOW_MCP_STORAGE_DIR/tokens.json, default
+    #             ~/.nsflow/mcp_oauth — see GetMcpTool.get_nsflow_tokens_file).
+    #             Values hold token material — never log them.
+    #    Lives:   get_mcp_tool.GetMcpTool (async get_mcp_servers /
+    #             get_mcp_servers_auth_info)
+    #    Expiry:  either file's resolved path or modification_time change —
+    #             no time bucket, since nothing writes mcp_info.hocon at
+    #             runtime and every nsflow token write touches tokens.json.
     #    Used by: GetMcpTool (input to the tool-descriptions cache below);
     #             agent_network_structure_validation_middleware
     #             .AgentNetworkStructureValidationMiddleware.validate();
     #             agent_network_persistence_middleware.AgentNetworkPersistenceMiddleware
-    #             ._assemble_and_persist().
+    #             ._assemble_and_persist() (via get_mcp_servers_auth_info,
+    #             which drives the generated sly_data_schema).
     #
     # 6. Shared MCP tool descriptions
     #    Holds:   the {server URL: tool descriptions} mapping fetched from
-    #             the MCP servers themselves (network calls).
+    #             the MCP servers themselves (network calls, sent with a
+    #             stored nsflow OAuth bearer token when one exists).
     #    Lives:   get_mcp_tool.GetMcpTool (async get_mcp_tool_descriptions)
-    #    Expiry:  mcp_info.hocon path/modification_time change, or one
+    #    Expiry:  mcp_info.hocon or tokens.json path/modification_time
+    #             change, or one
     #             AGENT_NETWORK_DESIGNER_MCP_TOOLS_TTL_SECONDS window
     #             (default 300s, clamped to at least twice the per-server
     #             fetch cap; <= 0 disables time-based refresh) — the

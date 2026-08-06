@@ -15,6 +15,7 @@
 # END COPYRIGHT
 
 import asyncio
+import json
 import logging
 import os
 from math import isfinite
@@ -34,6 +35,15 @@ from neuro_san_studio import mcp as _mcp_pkg
 # Resolved via the imported package's __file__ so it works both in-repo and
 # after `pip install` on every platform. Mirrors run.py.
 BUNDLED_MCP_INFO_FILE: Path = Path(_mcp_pkg.__file__).parent / "mcp_info.hocon"
+
+# Where nsflow persists its MCP OAuth credentials (see nsflow's
+# mcp_token_storage.py): a tokens.json keyed by MCP server URL, written
+# atomically, in NSFLOW_MCP_STORAGE_DIR or the same default nsflow uses.
+# Reading it lets the designer list tools from OAuth-protected MCP servers
+# whose bearer tokens were obtained by the nsflow client on this machine.
+NSFLOW_MCP_STORAGE_DIR_ENV: str = "NSFLOW_MCP_STORAGE_DIR"
+DEFAULT_NSFLOW_MCP_STORAGE_DIR: str = "~/.nsflow/mcp_oauth"
+NSFLOW_MCP_TOKENS_FILE_NAME: str = "tokens.json"
 
 # Default cap on how long one MCP server may take to answer a tool listing
 # (see _mcp_tools_fetch_timeout_seconds for the env-var override). The
@@ -88,53 +98,141 @@ class GetMcpTool(CodedTool):
         return str(BUNDLED_MCP_INFO_FILE)
 
     @staticmethod
-    def _mcp_info_fingerprint() -> tuple[str, int | None]:
+    def get_nsflow_tokens_file() -> str:
+        """Resolve the path of nsflow's MCP OAuth token store at call time.
+
+        NSFLOW_MCP_STORAGE_DIR (expanduser'd, mirroring nsflow's
+        _default_storage_dir) when non-empty, else ~/.nsflow/mcp_oauth;
+        the file inside it is tokens.json.
+
+        :return: The tokens.json path. Never raises — this resolver runs
+                inside fingerprint probes; when no home directory can be
+                resolved the unexpanded path is returned, which simply
+                stats to None ("no token store").
+        """
+        base: str = os.getenv(NSFLOW_MCP_STORAGE_DIR_ENV) or DEFAULT_NSFLOW_MCP_STORAGE_DIR
+        try:
+            return str(Path(base).expanduser() / NSFLOW_MCP_TOKENS_FILE_NAME)
+        except (OSError, RuntimeError):
+            # expanduser raises when the home directory cannot be resolved.
+            return str(Path(base) / NSFLOW_MCP_TOKENS_FILE_NAME)
+
+    @staticmethod
+    def _load_storage_access_tokens() -> dict[str, str]:
+        """
+        Read nsflow's MCP OAuth token store into {server URL: access token}.
+
+        An entry is included iff it is a dict whose "tokens" value is a dict
+        holding a non-empty string "access_token" — the minimum needed to
+        attempt an authenticated tool listing. Entries marked needs_reauth
+        or past their expires_at are deliberately NOT filtered out here:
+        the policy is attempt-and-drop — a stale token fails its listing
+        fetch downstream and that server is simply omitted from the result,
+        exactly like any other unreachable server. (A cheap expires_at
+        pre-skip would save one doomed round trip, but it is intentionally
+        not implemented so attempt-and-drop stays the single behavior.)
+
+        A missing file just means nsflow has no stored connections — not
+        worth a warning. Unreadable or unparsable files degrade to {} with
+        a warning; nsflow writes the file atomically (os.replace), so torn
+        reads are impossible and no locking is needed for a read.
+
+        Token values must never be logged, and they never leave this class
+        except as Authorization headers on MCP requests.
+
+        :return: {server URL: access token}; {} when there is no usable store.
+        """
+        tokens_file: str = GetMcpTool.get_nsflow_tokens_file()
+        try:
+            with open(tokens_file, "r", encoding="utf-8") as handle:
+                blob: Any = json.load(handle)
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError) as error:
+            logger.warning("Could not read nsflow MCP token store at %s: %s", tokens_file, error)
+            return {}
+        if not isinstance(blob, dict):
+            logger.warning("Ignoring nsflow MCP token store at %s: top level is not an object", tokens_file)
+            return {}
+
+        access_tokens: dict[str, str] = {}
+        for server_url, entry in blob.items():
+            if not isinstance(entry, dict):
+                continue
+            tokens: Any = entry.get("tokens")
+            if not isinstance(tokens, dict):
+                continue
+            access_token: Any = tokens.get("access_token")
+            if isinstance(access_token, str) and access_token:
+                access_tokens[server_url] = access_token
+        return access_tokens
+
+    @staticmethod
+    def _mcp_sources_fingerprint() -> tuple[str, int | None, str, int | None]:
         """
         Freshness probe for the shared MCP-servers cache (see
-        SharedProcessCache): the cached list is served only while this value
-        is unchanged. Unlike the designer manifest there is no time bucket:
-        mcp_info.hocon is a plain config file with no `include`s and nothing
-        writes it at runtime, so the two components cover everything the
-        probe can see —
+        SharedProcessCache): the cached value is served only while this
+        value is unchanged. It covers both sources of the union the cache
+        holds — mcp_info.hocon and nsflow's tokens.json. Unlike the
+        designer manifest there is no time bucket: both are plain files
+        whose every relevant change touches path or modification time —
 
-        * the resolved path — an env-var change or the cwd-scaffolded file
+        * the resolved paths — an env-var change or the cwd-scaffolded file
           appearing takes effect on the next read;
-        * the file's modification_time — a direct edit invalidates immediately, and a
-          missing file (modification_time None) self-heals the moment it appears.
+        * each file's modification_time — a direct edit invalidates
+          immediately, and a missing file (modification_time None)
+          self-heals the moment it appears. nsflow rewrites tokens.json on
+          every connect/refresh/disconnect, so a new OAuth connection is
+          picked up promptly.
 
         Two changes are invisible to this probe: HOCON `${...}` references
-        inside the file resolve against the environment at parse time, so
-        changing THOSE env vars alters the parse result without touching
+        inside mcp_info.hocon resolve against the environment at parse time,
+        so changing THOSE env vars alters the parse result without touching
         path or modification_time; and LangChainMcpAdapter keeps its own copy of the
         servers info, frozen at its first load — a file edit refreshes
         which URLs this class serves, but not the connection details the
         adapter already latched. Both heal on process restart (or on the
         modification_time change of the next file edit, for the first).
 
-        :return: (path, modification_time_ns or None) tuple.
+        :return: (mcp_info path, its modification_time_ns or None,
+                tokens.json path, its modification_time_ns or None) tuple.
         """
         mcp_info_file: str = GetMcpTool.get_mcp_info_file()
-        return (mcp_info_file, SharedProcessCache.stat_modification_time_ns(mcp_info_file))
+        tokens_file: str = GetMcpTool.get_nsflow_tokens_file()
+        return (
+            mcp_info_file,
+            SharedProcessCache.stat_modification_time_ns(mcp_info_file),
+            tokens_file,
+            SharedProcessCache.stat_modification_time_ns(tokens_file),
+        )
 
     @staticmethod
-    def _load_mcp_servers() -> list[str]:
+    def _load_mcp_server_infos() -> dict[str, dict[str, Any]]:
         """
-        Loader for the shared MCP-servers list (runs inside
+        Loader for the shared MCP-servers cache (runs inside
         SharedProcessCache, off the event loop when reached via aget()).
 
-        :return: List of MCP server URLs from mcp_info.hocon. A missing,
-                unreadable, or unparseable file returns an empty list, which
-                IS published: the fingerprint self-heals it — a missing file
-                flips the modification_time component when it appears, and fixing a
-                broken file changes its modification_time — so nothing can pin an empty
-                list past the next change to the file itself (env-var
-                references INSIDE the file are the one exception; see
-                _mcp_info_fingerprint).
+        :return: The UNION of mcp_info.hocon entries and nsflow token-store
+                entries holding an access token, as
+                {server URL: {"has_file_headers": bool, "access_token": str | None}}.
+                has_file_headers records whether mcp_info.hocon configures
+                http_headers for the URL (i.e. the server is authenticated
+                file-side and needs no client-supplied token); access_token
+                is the nsflow OAuth bearer token when one is stored. A
+                missing, unreadable, or unparseable mcp_info.hocon degrades
+                to the token-store half alone, which IS published: the
+                fingerprint self-heals it — a missing file flips the
+                modification_time component when it appears, and fixing a
+                broken file changes its modification_time — so nothing can pin a degraded
+                value past the next change to the files themselves (env-var
+                references INSIDE mcp_info.hocon are the one exception; see
+                _mcp_sources_fingerprint). NOTE: values hold token material —
+                never log this mapping.
         """
         mcp_info_file: str = GetMcpTool.get_mcp_info_file()
         logger.info("MCP servers info file: %s", mcp_info_file)
 
-        servers: list[str] = []
+        infos: dict[str, dict[str, Any]] = {}
         try:
             # McpServersInfoRestorer is constructed with must_exist=False, so
             # a missing file comes back as None rather than an exception.
@@ -142,26 +240,44 @@ class GetMcpTool(CodedTool):
             if info is None:
                 logger.warning("MCP servers info file not found at %s. No MCP Servers will be used.", mcp_info_file)
                 info = {}
-            servers = list(info.keys())
+            for server_url, spec in info.items():
+                headers: Any = spec.get("http_headers") if isinstance(spec, dict) else None
+                infos[server_url] = {
+                    "has_file_headers": isinstance(headers, dict) and bool(headers),
+                    "access_token": None,
+                }
         except (OSError, ValueError) as error:
             # neuro-san re-wraps HOCON parse errors as ValueError; OSError
             # covers a file that exists but cannot be read (permissions, I/O
             # failure). Neither may escape: a loader exception would fail
             # every caller sharing this load, when the healthy answer is
-            # simply "no MCP servers right now".
+            # simply "no file-configured MCP servers right now".
             logger.warning("Failed to read MCP servers info file %s: %s", mcp_info_file, error)
-        return servers
 
-    # Process-wide cache of the MCP server URLs parsed from mcp_info.hocon.
-    # Previously cached per sly_data scope, so a server handling N concurrent
-    # conversations re-parsed the same HOCON N times, on the event loop.
-    # The (path, modification_time) fingerprint picks up env-var changes and file edits
-    # immediately; there is no time bucket because nothing changes this file
-    # at runtime. Locking, publish ordering, and the async once-gate live in
-    # SharedProcessCache; access goes through the class by name (not cls) so
-    # a hypothetical subclass shares the one cache instead of splitting it.
-    _shared_mcp_servers_cache: SharedProcessCache[list[str]] = SharedProcessCache(
-        loader=_load_mcp_servers, fingerprint=_mcp_info_fingerprint
+        # Overlay nsflow's OAuth connections. A URL present in both sources
+        # keeps has_file_headers=True and gains the token: the token wins at
+        # fetch time (mirroring runtime sly_data-over-file precedence), while
+        # has_file_headers still marks the server as usable without one.
+        for server_url, access_token in GetMcpTool._load_storage_access_tokens().items():
+            entry: dict[str, Any] = infos.setdefault(server_url, {"has_file_headers": False, "access_token": None})
+            entry["access_token"] = access_token
+        return infos
+
+    # Process-wide cache of MCP server info: the union of the URLs parsed
+    # from mcp_info.hocon and the OAuth connections in nsflow's token store,
+    # with per-URL auth metadata (see _load_mcp_server_infos; the values
+    # hold token material — never log them). Previously cached per sly_data
+    # scope, so a server handling N concurrent conversations re-parsed the
+    # same HOCON N times, on the event loop.
+    # The (paths, modification_times) fingerprint picks up env-var changes
+    # and edits to either file immediately; there is no time bucket because
+    # nothing changes mcp_info.hocon at runtime and every nsflow token write
+    # touches tokens.json's modification time. Locking, publish ordering,
+    # and the async once-gate live in SharedProcessCache; access goes
+    # through the class by name (not cls) so a hypothetical subclass shares
+    # the one cache instead of splitting it.
+    _shared_mcp_servers_cache: SharedProcessCache[dict[str, dict[str, Any]]] = SharedProcessCache(
+        loader=_load_mcp_server_infos, fingerprint=_mcp_sources_fingerprint
     )
 
     @staticmethod
@@ -224,45 +340,55 @@ class GetMcpTool(CodedTool):
         return max(ttl, 2 * fetch_cap)
 
     @staticmethod
-    def _mcp_tools_fingerprint() -> tuple[str, int | None, float, int]:
+    def _mcp_tools_fingerprint() -> tuple[str, int | None, str, int | None, float, int]:
         """
         Freshness probe for the shared tool-descriptions cache: the
-        MCP-servers-list fingerprint (so an mcp_info.hocon edit refreshes the
-        listings immediately) plus the TTL and a time bucket that rolls once
-        per TTL window (see _mcp_tools_ttl_seconds; frozen when TTL <= 0).
+        MCP-sources fingerprint (so an mcp_info.hocon edit or an nsflow
+        OAuth connect/refresh refreshes the listings immediately) plus the
+        TTL and a time bucket that rolls once per TTL window (see
+        _mcp_tools_ttl_seconds; frozen when TTL <= 0).
         The TTL value itself rides along because bucket numbers from
         different TTL regimes are not comparable — after an env-var change,
         bucket N under the new TTL can collide with bucket N under the old
         one and revive a stale entry; carrying the TTL makes any change to
         it an immediate miss instead.
 
-        :return: (path, modification_time_ns or None, ttl, time bucket) tuple.
+        :return: (*_mcp_sources_fingerprint(), ttl, time bucket) tuple.
         """
-        mcp_info_file, modification_time_ns = GetMcpTool._mcp_info_fingerprint()
         ttl: float = GetMcpTool._mcp_tools_ttl_seconds()
-        return (mcp_info_file, modification_time_ns, ttl, SharedProcessCache.time_bucket(ttl))
+        return (*GetMcpTool._mcp_sources_fingerprint(), ttl, SharedProcessCache.time_bucket(ttl))
 
     @staticmethod
-    async def _fetch_tool_descriptions(server: str, fetch_timeout: float | None) -> tuple[str, str | None]:
+    async def _fetch_tool_descriptions(
+        server: str, fetch_timeout: float | None, headers: dict[str, str] | None = None
+    ) -> tuple[str, str | None]:
         """
         Fetch one MCP server's tool listing and flatten it into a
         description string, on the private event loop that
-        _load_mcp_tool_descriptions runs. LangChainMcpAdapter resolves the
-        server's connection details from its own copy of the servers info
-        (loaded once per process — see _mcp_info_fingerprint), opens a
-        session, and lists the tools.
+        _load_mcp_tool_descriptions runs. With headers=None,
+        LangChainMcpAdapter resolves the server's connection details from
+        its own copy of the servers info (loaded once per process — see
+        _mcp_sources_fingerprint), opens a session, and lists the tools.
+        Passing headers overrides the adapter's file-configured
+        http_headers for this request — used to send an nsflow OAuth bearer
+        token, mirroring the runtime precedence of sly_data headers over
+        the servers-info file.
 
         :param server: The MCP server URL.
         :param fetch_timeout: Per-server cap in seconds, or None for no cap
                 (see _mcp_tools_fetch_timeout_seconds).
+        :param headers: Optional HTTP headers for the MCP requests. Holds
+                token material when set — never log it.
         :return: (server, newline-joined tool descriptions) on success,
                 (server, None) on any failure — this never raises, so one
-                broken server cannot take out the whole gathered batch.
+                broken server cannot take out the whole gathered batch. A
+                stale or revoked token is just such a failure: its server
+                is dropped from this round's listing (attempt-and-drop).
         """
         logger.info("MCP Server: %s", server)
         try:
             tools: list[BaseTool] = await asyncio.wait_for(
-                LangChainMcpAdapter().get_mcp_tools(server), timeout=fetch_timeout
+                LangChainMcpAdapter().get_mcp_tools(server, headers=headers), timeout=fetch_timeout
             )
             logger.info("Successfully loaded the following tools: %s", str(tools))
             # Flatten the descriptions INSIDE the try: a malformed tool
@@ -282,22 +408,30 @@ class GetMcpTool(CodedTool):
         return server, description
 
     @staticmethod
-    async def _fetch_all_tool_descriptions(servers: list[str]) -> dict[str, str]:
+    async def _fetch_all_tool_descriptions(server_infos: dict[str, dict[str, Any]]) -> dict[str, str]:
         """
-        Fetch every configured server's tool listing concurrently; the
+        Fetch every known server's tool listing concurrently; the
         entry point of the private event loop that
         _load_mcp_tool_descriptions runs.
 
-        :param servers: The MCP server URLs from the shared servers cache.
+        :param server_infos: The {server URL: auth info} union from the
+                shared servers cache (see _load_mcp_server_infos). Holds
+                token material — never log it.
         :return: dict mapping each server URL that answered to its tools'
                 descriptions; servers that failed are absent.
         """
         fetch_timeout: float | None = GetMcpTool._mcp_tools_fetch_timeout_seconds()
+        coroutines: list[Any] = []
+        for server, entry in server_infos.items():
+            access_token: Any = entry.get("access_token") if isinstance(entry, dict) else None
+            # A stored nsflow OAuth token is sent as the Authorization
+            # header and takes precedence over any file-configured headers
+            # (headers=None falls back to those inside the adapter).
+            headers: dict[str, str] | None = {"Authorization": f"Bearer {access_token}"} if access_token else None
+            coroutines.append(GetMcpTool._fetch_tool_descriptions(server, fetch_timeout, headers))
         # return_exceptions=False is safe here because
         # _fetch_tool_descriptions swallows its own errors.
-        results = await asyncio.gather(
-            *[GetMcpTool._fetch_tool_descriptions(server, fetch_timeout) for server in servers]
-        )
+        results = await asyncio.gather(*coroutines)
         return {server: description for server, description in results if description is not None}
 
     @staticmethod
@@ -329,11 +463,11 @@ class GetMcpTool(CodedTool):
                 descriptions filler's all-empty guard.
         """
         # Already in a worker thread here, so the blocking get() is fine.
-        servers: list[str] = GetMcpTool._shared_mcp_servers_cache.get()
-        descriptions: dict[str, str] = asyncio.run(GetMcpTool._fetch_all_tool_descriptions(servers))
-        if servers and not descriptions and GetMcpTool._mcp_tools_ttl_seconds() <= 0:
+        server_infos: dict[str, dict[str, Any]] = GetMcpTool._shared_mcp_servers_cache.get()
+        descriptions: dict[str, str] = asyncio.run(GetMcpTool._fetch_all_tool_descriptions(server_infos))
+        if server_infos and not descriptions and GetMcpTool._mcp_tools_ttl_seconds() <= 0:
             raise RuntimeError(
-                f"all {len(servers)} MCP tool-listing fetches failed and time-based refresh is disabled; "
+                f"all {len(server_infos)} MCP tool-listing fetches failed and time-based refresh is disabled; "
                 "treating as a failed load"
             )
         return descriptions
@@ -343,8 +477,9 @@ class GetMcpTool(CodedTool):
     # scope, so every conversation paid the full network round-trip to every
     # server (sequentially). The sources are external servers with no local
     # change signal, so freshness is time-based: the fingerprint reuses the
-    # mcp_info.hocon (path, modification_time) probe — a config edit refreshes
-    # immediately — plus a TTL bucket (default 300s, see
+    # MCP-sources (paths, modification_times) probe — a config edit or an
+    # nsflow OAuth token write refreshes immediately — plus a TTL bucket
+    # (default 300s, see
     # _mcp_tools_ttl_seconds) that bounds both staleness and how long a
     # failed fetch's empty/partial result can be served. (With time-based
     # refresh disabled, an all-failed fetch raises instead of publishing —
@@ -380,19 +515,44 @@ class GetMcpTool(CodedTool):
     @staticmethod
     async def get_mcp_servers() -> list[str]:
         """
-        Get the list of MCP server URLs from mcp_info.hocon.
+        Get the list of known MCP server URLs: the union of mcp_info.hocon
+        entries and the OAuth connections stored by nsflow (see
+        _load_mcp_server_infos).
 
         Used by callers (e.g. middleware) that need to validate MCP
-        references. Reads only the config file, not the servers — and at
-        most once per process per config change, off the event loop, shared
-        by concurrent cold callers.
+        references. Reads only local files, not the servers — and at
+        most once per process per source-file change, off the event loop,
+        shared by concurrent cold callers.
 
-        :return: List of MCP server URLs, or an empty list if the file is
-                missing or fails to parse (see the loader for the
-                self-healing semantics). The returned list is a copy, so
-                callers may mutate it without corrupting the shared cache.
+        :return: List of MCP server URLs, or an empty list if neither
+                source yields any (see the loader for the self-healing
+                semantics). The returned list is a copy, so callers may
+                mutate it without corrupting the shared cache.
         """
         return list(await GetMcpTool._shared_mcp_servers_cache.aget())
+
+    @staticmethod
+    async def get_mcp_servers_auth_info() -> dict[str, bool]:
+        """
+        Get, for every known MCP server URL, whether it needs a
+        client-supplied token: True iff mcp_info.hocon configures no
+        http_headers for it (servers known only from nsflow's OAuth token
+        store are therefore always True). Used to build the data-driven
+        `required` list of the sly_data_schema emitted into generated
+        agent networks.
+
+        Same cache and fingerprint as get_mcp_servers(), so the two views
+        are always consistent. Values are bools only — no token material
+        leaves this class.
+
+        :return: {server URL: needs_client_token}. A fresh dict, so callers
+                may mutate it without corrupting the shared cache.
+        """
+        infos: dict[str, dict[str, Any]] = await GetMcpTool._shared_mcp_servers_cache.aget()
+        return {
+            server_url: not (isinstance(entry, dict) and entry.get("has_file_headers"))
+            for server_url, entry in infos.items()
+        }
 
     @staticmethod
     async def get_mcp_tool_descriptions() -> dict[str, str]:
