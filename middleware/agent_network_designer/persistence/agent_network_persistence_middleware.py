@@ -263,22 +263,34 @@ class AgentNetworkPersistenceMiddleware(AgentMiddleware):
         self.logger.info("Agent Network Name: %s", agent_network_name)
 
         subnetwork_names: list[str] = await GetSubnetwork.get_subnetwork_names()
-        file_servers: list[str] = await GetMcpTool.get_mcp_servers()
-        # Client-token servers: the ones this conversation supplied auth
-        # headers for via sly_data (nsflow injects one per connected server
-        # when chatting with the designer) that are not file-configured.
-        # These drive the generated network's sly_data_schema.
-        # Map each client-token URL to the header names the conversation
-        # supplied for it (names only, never values), so the generated
-        # sly_data_schema declares the actual headers a server needs rather
-        # than assuming "Authorization". sly_data_http_header_urls only
-        # yields URLs whose sly_data["http_headers"][url] is a dict, so the
-        # index below is safe.
-        client_token_mcp_headers: dict[str, list[str]] = {
-            url: [name for name in self.sly_data["http_headers"][url] if isinstance(name, str)]
-            for url in GetMcpTool.sly_data_http_header_urls(self.sly_data)
-            if url not in file_servers
-        }
+        # None when mcp_info.hocon exists but could not be read/parsed: the
+        # file-server set is then UNKNOWN, so we cannot tell which sly_data
+        # servers are genuinely client-token vs file-configured-but-unreadable.
+        # Emit no client-token schema in that case rather than bake a wrong
+        # required-list into the persisted (durable) network; a re-persist
+        # once the config is fixed produces the correct schema.
+        file_servers: list[str] | None = await GetMcpTool.get_mcp_servers_or_none()
+        if file_servers is None:
+            self.logger.warning(
+                "MCP servers info file could not be read; omitting client-token sly_data_schema "
+                "from the persisted network until the file is valid again."
+            )
+            file_servers = []
+            client_token_mcp_headers: dict[str, list[str]] = {}
+        else:
+            # Client-token servers: the ones this conversation supplied auth
+            # headers for via sly_data (nsflow injects one per connected server
+            # when chatting with the designer) that are not file-configured.
+            # Map each to the header names supplied for it (names only, never
+            # values), so the schema declares the actual headers a server
+            # needs rather than assuming "Authorization". sly_data_http_header_urls
+            # only yields URLs whose sly_data["http_headers"][url] is a dict,
+            # so the index below is safe.
+            client_token_mcp_headers = {
+                url: [name for name in self.sly_data["http_headers"][url] if isinstance(name, str)]
+                for url in GetMcpTool.sly_data_http_header_urls(self.sly_data)
+                if url not in file_servers
+            }
         mcp_servers: list[str] = file_servers + list(client_token_mcp_headers)
         persistor: AgentNetworkPersistor = AgentNetworkPersistorFactory.create_persistor(
             {"reservationist": self.reservationist},

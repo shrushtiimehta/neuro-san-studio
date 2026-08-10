@@ -42,6 +42,7 @@ from coded_tools.agent_network_editor.get_mcp_tool import BUNDLED_MCP_INFO_FILE 
 from coded_tools.agent_network_editor.get_mcp_tool import DEFAULT_MCP_TOOLS_FETCH_TIMEOUT_SECONDS  # noqa: E402
 from coded_tools.agent_network_editor.get_mcp_tool import DEFAULT_MCP_TOOLS_TTL_SECONDS  # noqa: E402
 from coded_tools.agent_network_editor.get_mcp_tool import GetMcpTool  # noqa: E402
+from coded_tools.agent_network_editor.get_mcp_tool import _McpServersLoad  # noqa: E402
 from coded_tools.agent_network_editor.globals import ProcessGlobals  # noqa: E402
 
 MCP_SERVERS: list[str] = ["https://one.example/mcp", "https://two.example/mcp"]
@@ -156,6 +157,29 @@ class TestGetMcpServers(TestCase):
             ):
                 self.assertEqual(asyncio.run(GetMcpTool.get_mcp_servers()), [])
 
+    def test_or_none_returns_none_only_when_the_file_load_failed(self):
+        """A broken file is 'unknown' (None); missing/empty/good files are not."""
+        # A missing file is an authoritative empty, not a failure.
+        with mock.patch.dict(os.environ, {"MCP_SERVERS_INFO_FILE": "/nonexistent/mcp_info.hocon"}):
+            self.assertEqual(asyncio.run(GetMcpTool.get_mcp_servers_or_none()), [])
+
+        # A file that exists but cannot be read/parsed is unknown → None.
+        for error in (OSError("permission denied"), ValueError("bad hocon")):
+            GetMcpTool.clear_shared_mcp_servers_for_testing()
+            restorer = mock.Mock()
+            restorer.restore.side_effect = error
+            with mock.patch(
+                "coded_tools.agent_network_editor.get_mcp_tool.McpServersInfoRestorer", return_value=restorer
+            ):
+                self.assertIsNone(asyncio.run(GetMcpTool.get_mcp_servers_or_none()))
+
+        # A file that loads returns its URLs (never None), even if empty.
+        GetMcpTool.clear_shared_mcp_servers_for_testing()
+        restorer = mock.Mock()
+        restorer.restore.return_value = {"https://one.example/mcp": {}}
+        with mock.patch("coded_tools.agent_network_editor.get_mcp_tool.McpServersInfoRestorer", return_value=restorer):
+            self.assertEqual(asyncio.run(GetMcpTool.get_mcp_servers_or_none()), ["https://one.example/mcp"])
+
 
 class TestSlyDataHttpHeaderUrls(TestCase):
     """Extraction of the per-conversation MCP header URLs from sly_data."""
@@ -241,7 +265,8 @@ class TestGetMcpToolDescriptions(TestCase):
     def _patched_servers(self, servers: list[str] | None = None):
         """Pin the servers half so these tests never read the real config file."""
         pinned = MCP_SERVERS if servers is None else servers
-        return mock.patch.object(GetMcpTool._shared_mcp_servers_cache, "get", new=mock.Mock(return_value=list(pinned)))
+        loaded = _McpServersLoad(list(pinned), True)
+        return mock.patch.object(GetMcpTool._shared_mcp_servers_cache, "get", new=mock.Mock(return_value=loaded))
 
     def test_concurrent_callers_share_one_fetch_and_warm_reads_are_free(self):
         """A cold burst fetches each server once; warm reads fetch nothing."""

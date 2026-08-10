@@ -21,6 +21,7 @@ import sys
 from math import isfinite
 from pathlib import Path
 from typing import Any
+from typing import NamedTuple
 
 from langchain_core.tools import BaseTool
 from neuro_san.interfaces.coded_tool import CodedTool
@@ -60,6 +61,22 @@ DEFAULT_MCP_TOOLS_TTL_SECONDS: float = 300.0
 _EXCEPTION_GROUP_TYPES: tuple[type[BaseException], ...] = (BaseExceptionGroup,) if sys.version_info >= (3, 11) else ()
 
 logger = AndLogger(logging.getLogger(__name__))
+
+
+class _McpServersLoad(NamedTuple):
+    """
+    Result of loading mcp_info.hocon: the file-configured server URLs plus
+    whether the file was read successfully.
+
+    loaded_ok separates an authoritatively empty result (a missing or empty
+    file — there really are no file-configured servers) from a degraded one
+    (the file exists but could not be read or parsed — the set is UNKNOWN).
+    Only the former makes it safe to treat a connected server as
+    client-token; see get_mcp_servers_or_none.
+    """
+
+    urls: list[str]
+    loaded_ok: bool
 
 
 class GetMcpTool(CodedTool):
@@ -137,15 +154,15 @@ class GetMcpTool(CodedTool):
         return (mcp_info_file, SharedProcessCache.stat_modification_time_ns(mcp_info_file))
 
     @staticmethod
-    def _load_mcp_servers() -> list[str]:
+    def _load_mcp_servers() -> "_McpServersLoad":
         """
         Loader for the shared MCP-servers list (runs inside
         SharedProcessCache, off the event loop when reached via aget()).
 
-        :return: List of MCP server URLs from mcp_info.hocon. A missing,
-                unreadable, or unparseable file returns an empty list, which
-                IS published: the fingerprint self-heals it — a missing file
-                flips the modification_time component when it appears, and fixing a
+        :return: A _McpServersLoad. A missing, unreadable, or unparseable
+                file returns an empty URL list, which IS published: the
+                fingerprint self-heals it — a missing file flips the
+                modification_time component when it appears, and fixing a
                 broken file changes its modification_time — so nothing can pin an empty
                 list past the next change to the file itself (env-var
                 references INSIDE the file are the one exception; see
@@ -155,13 +172,16 @@ class GetMcpTool(CodedTool):
         logger.info("MCP servers info file: %s", mcp_info_file)
 
         servers: list[str] = []
+        loaded_ok: bool = True
         try:
             # McpServersInfoRestorer is constructed with must_exist=False, so
             # a missing file comes back as None rather than an exception.
             info: dict[str, Any] = McpServersInfoRestorer().restore(file_reference=mcp_info_file)
             if info is None:
                 # Servers supplied per-conversation via sly_data http_headers
-                # (if any) are unaffected — only the file half is empty.
+                # (if any) are unaffected — only the file half is empty. A
+                # missing file is an authoritative empty (loaded_ok stays
+                # True): there genuinely are no file-configured servers.
                 logger.warning(
                     "MCP servers info file not found at %s. No file-configured MCP servers will be used.",
                     mcp_info_file,
@@ -173,9 +193,13 @@ class GetMcpTool(CodedTool):
             # covers a file that exists but cannot be read (permissions, I/O
             # failure). Neither may escape: a loader exception would fail
             # every caller sharing this load, when the healthy answer is
-            # simply "no file-configured MCP servers right now".
+            # simply "no file-configured MCP servers right now". But flag the
+            # load as FAILED (not an authoritative empty) so a caller that
+            # persists a network can tell "no file servers" from "the set is
+            # unknown" and avoid baking a wrong schema (get_mcp_servers_or_none).
             logger.warning("Failed to read MCP servers info file %s: %s", mcp_info_file, error)
-        return servers
+            loaded_ok = False
+        return _McpServersLoad(servers, loaded_ok)
 
     # Process-wide cache of the MCP server URLs parsed from mcp_info.hocon.
     # Previously cached per sly_data scope, so a server handling N concurrent
@@ -187,7 +211,7 @@ class GetMcpTool(CodedTool):
     # Locking, publish ordering, and the async once-gate live in
     # SharedProcessCache; access goes through the class by name (not cls) so
     # a hypothetical subclass shares the one cache instead of splitting it.
-    _shared_mcp_servers_cache: SharedProcessCache[list[str]] = SharedProcessCache(
+    _shared_mcp_servers_cache: SharedProcessCache[_McpServersLoad] = SharedProcessCache(
         loader=_load_mcp_servers, fingerprint=_mcp_info_fingerprint
     )
 
@@ -430,7 +454,7 @@ class GetMcpTool(CodedTool):
                 descriptions filler's all-empty guard.
         """
         # Already in a worker thread here, so the blocking get() is fine.
-        servers: list[str] = GetMcpTool._shared_mcp_servers_cache.get()
+        servers: list[str] = GetMcpTool._shared_mcp_servers_cache.get().urls
         descriptions: dict[str, str] = asyncio.run(GetMcpTool._fetch_all_tool_descriptions(servers))
         if servers and not descriptions and GetMcpTool._mcp_tools_ttl_seconds() <= 0:
             raise RuntimeError(
@@ -498,8 +522,31 @@ class GetMcpTool(CodedTool):
                 missing or fails to parse (see the loader for the
                 self-healing semantics). The returned list is a copy, so
                 callers may mutate it without corrupting the shared cache.
+                Callers that PERSIST a network want get_mcp_servers_or_none
+                instead, so a broken file (unknown set) is not mistaken for
+                "no file servers".
         """
-        return list(await GetMcpTool._shared_mcp_servers_cache.aget())
+        return (await GetMcpTool.get_mcp_servers_or_none()) or []
+
+    @staticmethod
+    async def get_mcp_servers_or_none() -> list[str] | None:
+        """
+        Like get_mcp_servers, but returns None when mcp_info.hocon exists yet
+        could not be read or parsed — as opposed to [] for a genuinely
+        missing or empty file.
+
+        The file-vs-client classification ("a sly_data server not in the
+        file list is client-token") is only sound when the file list is
+        complete. When the file failed to load, the set is unknown, so a
+        caller that persists a network uses None here to decline emitting a
+        client-token sly_data_schema rather than bake a wrong one from an
+        incomplete list (see AgentNetworkPersistenceMiddleware).
+
+        :return: A fresh copy of the MCP server URLs on a successful load
+                (possibly empty), or None when the file could not be read.
+        """
+        load: _McpServersLoad = await GetMcpTool._shared_mcp_servers_cache.aget()
+        return list(load.urls) if load.loaded_ok else None
 
     @staticmethod
     def sly_data_http_header_urls(sly_data: dict[str, Any] | None) -> list[str]:
