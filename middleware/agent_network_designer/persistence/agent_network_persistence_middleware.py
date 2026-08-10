@@ -281,13 +281,18 @@ class AgentNetworkPersistenceMiddleware(AgentMiddleware):
             # Client-token servers: the ones this conversation supplied auth
             # headers for via sly_data (nsflow injects one per connected server
             # when chatting with the designer) that are not file-configured.
-            # Map each to the header names supplied for it (names only, never
-            # values), so the schema declares the actual headers a server
-            # needs rather than assuming "Authorization". sly_data_http_header_urls
-            # only yields URLs whose sly_data["http_headers"][url] is a dict,
-            # so the index below is safe.
+            # Map each to the usable header names supplied for it (names only,
+            # never values), so the schema declares the actual headers a server
+            # needs rather than assuming "Authorization". usable_header_names
+            # owns which names count — stripped, legal field names with
+            # non-blank values, exactly what the fetch would send — so the
+            # persisted schema never requires a header that would not
+            # actually authenticate. sly_data_http_header_urls only yields
+            # URLs whose sly_data["http_headers"][url] is a dict with at
+            # least one such name, so the index below is safe and no entry
+            # comes out empty.
             client_token_mcp_headers = {
-                url: [name for name in self.sly_data["http_headers"][url] if isinstance(name, str)]
+                url: GetMcpTool.usable_header_names(self.sly_data["http_headers"][url])
                 for url in GetMcpTool.sly_data_http_header_urls(self.sly_data)
                 if url not in file_servers
             }

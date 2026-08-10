@@ -225,12 +225,14 @@ class TestSlyDataHttpHeaderUrls(TestCase):
         self.assertEqual(GetMcpTool.sly_data_http_header_urls(sly_data), ["https://ok.example/mcp"])
 
     def test_urls_without_a_usable_header_are_skipped(self):
-        """An empty dict, a blank value, or a non-string value supplies no credential."""
+        """An empty dict, a blank value, a non-string value, or an illegal
+        header name supplies no credential the fetch could send."""
         sly_data = {
             "http_headers": {
                 "https://empty.example/mcp": {},
                 "https://blank.example/mcp": {"Authorization": "   "},
                 "https://nonstr.example/mcp": {"Authorization": 123},
+                "https://badname.example/mcp": {"Auth orization": "Bearer x"},
                 "https://ok.example/mcp": {"Authorization": "Bearer tok"},
             }
         }
@@ -594,6 +596,56 @@ class TestSanitizedHeaders(TestCase):
         """Malformed shapes are dropped rather than raising."""
         cleaned = GetMcpTool._sanitized_headers(CLIENT_URL, {"Authorization": 123, 42: "x", "X-Api-Key": "k"})
         self.assertEqual(cleaned, {"X-Api-Key": "k"})
+
+    def test_a_name_with_outer_whitespace_is_stripped(self):
+        """Names get the same recoverable-trim treatment as values."""
+        cleaned = GetMcpTool._sanitized_headers(CLIENT_URL, {" Authorization ": "Bearer tok"})
+        self.assertEqual(cleaned, {"Authorization": "Bearer tok"})
+
+    def test_an_illegal_name_drops_the_header_without_echoing_it(self):
+        """A name that is still illegal after the outer-whitespace trim (an
+        EMBEDDED control char, space, or colon) would fail the whole request
+        at send time, so it is dropped up front — and never echoed, since
+        junk in the name slot could be a misplaced secret. Well-formed
+        headers still go through."""
+        with self.assertLogs(level="WARNING") as captured:
+            cleaned = GetMcpTool._sanitized_headers(CLIENT_URL, {"X-NAME\rSECRET": "v", "  ": "w", "X-Api-Key": "k"})
+
+        self.assertEqual(cleaned, {"X-Api-Key": "k"})
+        logged = "\n".join(captured.output)
+        self.assertNotIn("SECRET", logged)
+        self.assertIn(CLIENT_URL, logged)
+
+    def test_a_blank_value_is_skipped_silently(self):
+        """A blank value supplies no credential: not sent, and not worth a
+        warning — mirroring how usable_header_names classifies it."""
+        with self.assertNoLogs(level="WARNING"):
+            cleaned = GetMcpTool._sanitized_headers(CLIENT_URL, {"Authorization": "  \n", "X-Api-Key": "k"})
+        self.assertEqual(cleaned, {"X-Api-Key": "k"})
+
+
+class TestUsableHeaderNames(TestCase):
+    """The single owner of which client-supplied header names count."""
+
+    def test_names_are_stripped_and_deduped_in_first_appearance_order(self):
+        """Two raw spellings of one name collapse; order is preserved."""
+        headers = {" Authorization ": "Bearer a", "Authorization": "Bearer b", "X-Api-Key": "k"}
+        self.assertEqual(GetMcpTool.usable_header_names(headers), ["Authorization", "X-Api-Key"])
+
+    def test_illegal_names_and_credential_less_values_are_excluded(self):
+        """Only a legal field name with a non-blank string value counts."""
+        headers = {
+            "Auth orization": "Bearer x",
+            "X-Blank": "   ",
+            "X-Non-Str": 123,
+            42: "v",
+            "X-Good": "v",
+        }
+        self.assertEqual(GetMcpTool.usable_header_names(headers), ["X-Good"])
+
+    def test_an_empty_dict_reads_as_no_names(self):
+        """No headers, no contract."""
+        self.assertEqual(GetMcpTool.usable_header_names({}), [])
 
 
 class TestRedactValues(TestCase):

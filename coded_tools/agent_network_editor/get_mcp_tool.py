@@ -17,6 +17,7 @@
 import asyncio
 import logging
 import os
+import re
 import sys
 from math import isfinite
 from pathlib import Path
@@ -59,6 +60,14 @@ DEFAULT_MCP_TOOLS_TTL_SECONDS: float = 300.0
 # against the empty tuple is simply always False — those interpreters keep
 # the plain str(error) rendering.
 _EXCEPTION_GROUP_TYPES: tuple[type[BaseException], ...] = (BaseExceptionGroup,) if sys.version_info >= (3, 11) else ()
+
+# Legal HTTP field-name charset (RFC 9110 "token"), for validating
+# conversation-supplied header NAMES. The HTTP stack validates outgoing
+# names just like values and raises on the first illegal one — failing the
+# whole request, not just the one header — so names outside this set are
+# dropped before the fetch (see _usable_header_name). Matched with
+# fullmatch(); the + quantifier also rejects an empty (blank) name.
+_HEADER_NAME_RE: re.Pattern[str] = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
 
 logger = AndLogger(logging.getLogger(__name__))
 
@@ -558,10 +567,10 @@ class GetMcpTool(CodedTool):
         connected server when chatting with the Agent Network Designer; the
         designer's allow.to_downstream forwards the key to this network).
 
-        Only http(s) URLs that carry at least one usable header (a string
-        name with a non-blank string value — see _has_usable_header) are
-        returned; everything else is skipped rather than raising, since chat
-        clients control this input. That covers a missing/non-dict
+        Only http(s) URLs that carry at least one usable header (a legal
+        header name with a non-blank string value — see usable_header_names)
+        are returned; everything else is skipped rather than raising, since
+        chat clients control this input. That covers a missing/non-dict
         http_headers, a non-string or non-http(s) key (which must never
         reach URL validation as an accepted reference), a non-dict header
         value, and a header-less or blank-valued entry (which supplies no
@@ -580,31 +589,59 @@ class GetMcpTool(CodedTool):
             if isinstance(url, str)
             and url.startswith(("http://", "https://"))
             and isinstance(headers, dict)
-            and GetMcpTool._has_usable_header(headers)
+            and GetMcpTool.usable_header_names(headers)
         ]
 
     @staticmethod
-    def _has_usable_header(headers: dict[Any, Any]) -> bool:
+    def usable_header_names(headers: dict[Any, Any]) -> list[str]:
         """
-        Whether a per-URL header dict carries at least one usable credential:
-        a string name that is not blank with a string value that is not
-        blank after stripping.
+        Get the header names in a per-URL header dict that supply a usable
+        credential: a legal HTTP header name (see _usable_header_name)
+        whose value is a string that is not blank after stripping.
 
-        This is the classification counterpart to _sanitized_headers (which
-        cleans the values actually sent): a server counts as client-token
-        only when it has such a header, so an empty dict, non-string
-        names/values, and blank values never make the fetch, the generated
-        schema, or URL validation treat a credential-less entry as a real
-        server.
+        Single owner of what counts as a usable client-supplied header.
+        Three call sites keep the story consistent: URL classification
+        (sly_data_http_header_urls treats a server as client-token only
+        when this is non-empty), the fetch path (_sanitized_headers sends
+        exactly these names, values cleaned), and the persisted contract
+        (AgentNetworkPersistenceMiddleware declares these names in the
+        generated sly_data_schema) — so a network never requires a header
+        that would not actually be sent.
 
         :param headers: A per-URL header dict from sly_data["http_headers"].
-        :return: True if any header is usable. Reads names/values only for
-                the check — no header material leaves this function.
+        :return: The stripped names in first-appearance order, deduped (two
+                raw spellings of one name collapse into the first). Names
+                only — no header value leaves this function.
         """
-        return any(
-            isinstance(name, str) and name.strip() and isinstance(value, str) and value.strip()
-            for name, value in headers.items()
-        )
+        names: dict[str, None] = {}
+        for name, value in headers.items():
+            usable_name: str | None = GetMcpTool._usable_header_name(name)
+            if usable_name is not None and isinstance(value, str) and value.strip():
+                names[usable_name] = None
+        return list(names)
+
+    @staticmethod
+    def _usable_header_name(name: Any) -> str | None:
+        """
+        Validate and normalize one conversation-supplied header name.
+
+        Outer whitespace is stripped (recoverable, the same treatment
+        values get). What remains must be a legal HTTP field name (RFC
+        9110 token — see _HEADER_NAME_RE): the HTTP stack validates names
+        on send exactly like values, so a blank name or one holding a
+        colon, space, control, or non-ASCII character would fail the whole
+        request rather than just this header.
+
+        :param name: One key from a per-URL header dict.
+        :return: The stripped name, or None when the name is not a string
+                or not a legal field name.
+        """
+        if not isinstance(name, str):
+            return None
+        stripped: str = name.strip()
+        if not _HEADER_NAME_RE.fullmatch(stripped):
+            return None
+        return stripped
 
     @staticmethod
     def _sanitized_headers(server: str, headers: dict[str, Any]) -> dict[str, str]:
@@ -612,14 +649,22 @@ class GetMcpTool(CodedTool):
         Clean a conversation's per-URL header dict before it reaches the
         HTTP stack.
 
-        A value with control characters — most often a token read with a
-        trailing newline — makes the streamable-http client raise before
-        the request, and that exception embeds the raw value, so an
-        unvalidated header could put token material on the drop path. Outer
+        The HTTP client validates outgoing names AND values and raises on
+        the first illegal one — failing the whole listing for this server,
+        and, for values, embedding the raw value (most often a token read
+        with a trailing newline) in the exception, which would put token
+        material on the drop path. So both halves are cleaned here.
+
+        Names: outer whitespace is stripped; what remains must be a legal
+        field name (see _usable_header_name) or the header is dropped with
+        a warning that does NOT echo the name — an arbitrary junk name
+        could hold anything, including a misplaced secret. Values: outer
         whitespace is stripped (the common, recoverable case, so a
-        newline-tailed token still authenticates); a value still holding a
-        control character is genuinely malformed and dropped, logging the
-        header NAME only. Non-string names/values are skipped. A value is
+        newline-tailed token still authenticates); a blank value supplies
+        no credential and is skipped silently, matching
+        usable_header_names; a value still holding a control character is
+        genuinely malformed and dropped, logging the (already validated)
+        header name only. Non-string names/values are skipped. A value is
         never logged.
 
         :param server: The MCP server URL, for the drop warning.
@@ -633,11 +678,19 @@ class GetMcpTool(CodedTool):
         for name, value in headers.items():
             if not isinstance(name, str) or not isinstance(value, str):
                 continue
-            stripped: str = value.strip()
-            if any((ord(char) < 0x20 and char != "\t") or ord(char) == 0x7F for char in stripped):
-                logger.warning("Dropping malformed MCP header %r for %s (illegal value characters).", name, server)
+            usable_name: str | None = GetMcpTool._usable_header_name(name)
+            if usable_name is None:
+                logger.warning("Dropping malformed MCP header for %s (illegal name characters).", server)
                 continue
-            cleaned[name] = stripped
+            stripped: str = value.strip()
+            if not stripped:
+                continue
+            if any((ord(char) < 0x20 and char != "\t") or ord(char) == 0x7F for char in stripped):
+                logger.warning(
+                    "Dropping malformed MCP header %r for %s (illegal value characters).", usable_name, server
+                )
+                continue
+            cleaned[usable_name] = stripped
         return cleaned
 
     @staticmethod
