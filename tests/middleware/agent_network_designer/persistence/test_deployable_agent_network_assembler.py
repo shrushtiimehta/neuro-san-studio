@@ -17,6 +17,8 @@
 """Tests for DeployableAgentNetworkAssembler's sly_data_schema emission."""
 
 import asyncio
+import os
+from pathlib import Path
 
 import pytest
 
@@ -29,10 +31,14 @@ from middleware.agent_network_designer.persistence.deployable_agent_network_asse
     DeployableAgentNetworkAssembler,
 )
 
+REPO_ROOT = Path(__file__).resolve().parents[4]
+
 OAUTH_URL = "https://oauth.example.com/mcp"
 FILE_AUTH_URL = "https://file-auth.example.com/mcp"
 
-MCP_SERVERS_AUTH: dict[str, bool] = {OAUTH_URL: True, FILE_AUTH_URL: False}
+# Client-token servers (from the conversation's sly_data http_headers);
+# FILE_AUTH_URL is a file-configured server and deliberately not in it.
+CLIENT_TOKEN_MCP_URLS: list[str] = [OAUTH_URL]
 
 NETWORK_DEF: dict = {
     "front_man": {"description": "top", "instructions": "Coordinate.", "tools": ["helper", OAUTH_URL]},
@@ -40,12 +46,26 @@ NETWORK_DEF: dict = {
 }
 
 
-def assemble(mcp_servers_auth: dict[str, bool] | None) -> dict:
-    """Assemble the test network into a deployable config dict (real templates)."""
+def assemble(client_token_mcp_urls: list[str] | None) -> dict:
+    """
+    Assemble the test network into a deployable config dict (real templates).
+
+    Runs from the repo root: the wrapper template's include resolves
+    CWD-relatively, so without the chdir these tests error out under any
+    runner whose working directory is not the repo root (IDE test runners,
+    CI steps with a different workdir).
+    """
     assembler = DeployableAgentNetworkAssembler(demo_mode=False)
-    return asyncio.run(
-        assembler.assemble_agent_network(NETWORK_DEF, "front_man", "test_net", ["query one"], mcp_servers_auth)
-    )
+    cwd = os.getcwd()
+    os.chdir(REPO_ROOT)
+    try:
+        return asyncio.run(
+            assembler.assemble_agent_network(
+                NETWORK_DEF, "front_man", "test_net", ["query one"], client_token_mcp_urls
+            )
+        )
+    finally:
+        os.chdir(cwd)
 
 
 class TestDeployableAssemblerSlyDataSchema:
@@ -53,7 +73,7 @@ class TestDeployableAssemblerSlyDataSchema:
 
     def test_front_man_declares_the_schema(self):
         """The top agent's function block carries the nsflow contract."""
-        agent_network = assemble(MCP_SERVERS_AUTH)
+        agent_network = assemble(CLIENT_TOKEN_MCP_URLS)
 
         front_man = agent_network["tools"][0]
         assert front_man["name"] == "front_man"
@@ -65,14 +85,14 @@ class TestDeployableAssemblerSlyDataSchema:
 
     def test_non_top_agents_carry_no_schema(self):
         """Only the front man talks to clients; helpers must not declare one."""
-        agent_network = assemble(MCP_SERVERS_AUTH)
+        agent_network = assemble(CLIENT_TOKEN_MCP_URLS)
         for agent in agent_network["tools"][1:]:
             function = agent.get("function")
             if isinstance(function, dict):
                 assert "sly_data_schema" not in function
 
-    def test_no_mcp_means_no_schema(self):
-        """Without MCP servers the function block stays as the template made it."""
-        for auth_info in (None, {}):
-            agent_network = assemble(auth_info)
+    def test_no_client_urls_means_no_schema(self):
+        """Without client-token servers the function block stays as templated."""
+        for client_urls in (None, []):
+            agent_network = assemble(client_urls)
             assert "sly_data_schema" not in agent_network["tools"][0]["function"]

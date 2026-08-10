@@ -263,10 +263,15 @@ class AgentNetworkPersistenceMiddleware(AgentMiddleware):
         self.logger.info("Agent Network Name: %s", agent_network_name)
 
         subnetwork_names: list[str] = await GetSubnetwork.get_subnetwork_names()
-        # The url -> needs-client-token view drives the generated sly_data_schema;
-        # its keys are the same server list get_mcp_servers() would return.
-        mcp_servers_auth: dict[str, bool] = await GetMcpTool.get_mcp_servers_auth_info()
-        mcp_servers: list[str] = list(mcp_servers_auth)
+        file_servers: list[str] = await GetMcpTool.get_mcp_servers()
+        # Client-token servers: the ones this conversation supplied auth
+        # headers for via sly_data (nsflow injects one per connected server
+        # when chatting with the designer) that are not file-configured.
+        # These drive the generated network's sly_data_schema.
+        client_token_mcp_urls: list[str] = [
+            url for url in GetMcpTool.sly_data_http_header_urls(self.sly_data) if url not in file_servers
+        ]
+        mcp_servers: list[str] = file_servers + client_token_mcp_urls
         persistor: AgentNetworkPersistor = AgentNetworkPersistorFactory.create_persistor(
             {"reservationist": self.reservationist},
             WRITE_TO_FILE,
@@ -279,7 +284,11 @@ class AgentNetworkPersistenceMiddleware(AgentMiddleware):
 
         # Always assemble and store HOCON content for client consumption.
         persisted_content: str = await HoconAgentNetworkAssembler(DEMO_MODE).assemble_agent_network(
-            network_def, top_agent_name, agent_network_name, sample_queries, mcp_servers_auth=mcp_servers_auth
+            network_def,
+            top_agent_name,
+            agent_network_name,
+            sample_queries,
+            client_token_mcp_urls=client_token_mcp_urls,
         )
         self.logger.info("The resulting agent network content: \n %s", persisted_content)
         self.sly_data[AGENT_NETWORK_HOCON_TEXT] = persisted_content
@@ -294,7 +303,11 @@ class AgentNetworkPersistenceMiddleware(AgentMiddleware):
             assembler: AgentNetworkAssembler = persistor.get_assembler()
             # The persisted content for reservations is config.
             persisted_content: dict[str, Any] = await assembler.assemble_agent_network(
-                network_def, top_agent_name, agent_network_name, sample_queries, mcp_servers_auth=mcp_servers_auth
+                network_def,
+                top_agent_name,
+                agent_network_name,
+                sample_queries,
+                client_token_mcp_urls=client_token_mcp_urls,
             )
         # Persist the agent network
         persisted_reference: str | list[dict[str, Any]] = await persistor.async_persist(

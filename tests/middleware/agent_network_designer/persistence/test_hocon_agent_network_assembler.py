@@ -30,7 +30,9 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 OAUTH_URL = "https://oauth.example.com/mcp"
 FILE_AUTH_URL = "https://file-auth.example.com/mcp"
 
-MCP_SERVERS_AUTH: dict[str, bool] = {OAUTH_URL: True, FILE_AUTH_URL: False}
+# Client-token servers (from the conversation's sly_data http_headers);
+# FILE_AUTH_URL is a file-configured server and deliberately not in it.
+CLIENT_TOKEN_MCP_URLS: list[str] = [OAUTH_URL]
 
 NETWORK_DEF: dict = {
     "front_man": {"description": "top", "instructions": "Coordinate.", "tools": ["helper", OAUTH_URL]},
@@ -38,11 +40,11 @@ NETWORK_DEF: dict = {
 }
 
 
-def assemble(mcp_servers_auth: dict[str, bool] | None) -> str:
+def assemble(client_token_mcp_urls: list[str] | None) -> str:
     """Assemble the test network into HOCON text."""
     assembler = HoconAgentNetworkAssembler(demo_mode=False)
     return asyncio.run(
-        assembler.assemble_agent_network(NETWORK_DEF, "front_man", "test_net", ["query one"], mcp_servers_auth)
+        assembler.assemble_agent_network(NETWORK_DEF, "front_man", "test_net", ["query one"], client_token_mcp_urls)
     )
 
 
@@ -71,7 +73,7 @@ class TestHoconAssemblerSlyDataSchema:
 
     def test_front_man_declares_the_schema_and_it_parses(self):
         """The emitted text stays valid HOCON and carries the nsflow contract."""
-        config = parse(assemble(MCP_SERVERS_AUTH))
+        config = parse(assemble(CLIENT_TOKEN_MCP_URLS))
 
         front_man = config["tools"][0]
         assert front_man["name"] == "front_man"
@@ -86,19 +88,19 @@ class TestHoconAssemblerSlyDataSchema:
 
     def test_non_top_agents_carry_no_schema(self):
         """Only the front man talks to clients; helpers must not declare one."""
-        config = parse(assemble(MCP_SERVERS_AUTH))
+        config = parse(assemble(CLIENT_TOKEN_MCP_URLS))
         for agent in config["tools"][1:]:
             assert "sly_data_schema" not in agent.get("function", {})
 
     def test_no_mcp_means_no_schema_and_unchanged_output(self):
         """Without MCP the text is byte-identical to the pre-schema behavior."""
-        without_auth_info = assemble(None)
-        with_no_known_servers = assemble({})
+        without_client_urls = assemble(None)
+        with_no_client_urls = assemble([])
 
-        assert "sly_data_schema" not in without_auth_info
+        assert "sly_data_schema" not in without_client_urls
         # The two renders differ only in the date_created stamp.
         strip_date = re.compile(r'"date_created": "[^"]*"')
-        assert strip_date.sub("", without_auth_info) == strip_date.sub("", with_no_known_servers)
+        assert strip_date.sub("", without_client_urls) == strip_date.sub("", with_no_client_urls)
 
-        config = parse(without_auth_info)
+        config = parse(without_client_urls)
         assert "sly_data_schema" not in config["tools"][0]["function"]

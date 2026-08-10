@@ -14,6 +14,7 @@
 #
 # END COPYRIGHT
 
+from collections.abc import Collection
 from copy import copy as shallow_copy
 from copy import deepcopy
 from typing import Any
@@ -57,7 +58,7 @@ class DeployableAgentNetworkAssembler(AgentNetworkAssembler):
         top_agent_name: str,
         agent_network_name: str,
         sample_queries: list[str],
-        mcp_servers_auth: dict[str, bool] | None = None,
+        client_token_mcp_urls: Collection[str] | None = None,
     ) -> dict[str, Any]:
         """
         Assemble the agent network from the definition.
@@ -66,8 +67,9 @@ class DeployableAgentNetworkAssembler(AgentNetworkAssembler):
         :param top_agent_name: The name of the top agent
         :param agent_network_name: The file name, without the .hocon extension
         :param sample_queries: List of sample queries for the agent network
-        :param mcp_servers_auth: Optional {MCP server URL: needs_client_token} mapping
-                driving the front man's sly_data_schema (see the base class)
+        :param client_token_mcp_urls: Optional collection of MCP server URLs whose
+                auth is client-supplied, driving the front man's sly_data_schema
+                (see the base class)
 
         :return: Some representation of the agent network
         """
@@ -91,10 +93,8 @@ class DeployableAgentNetworkAssembler(AgentNetworkAssembler):
         if sample_queries:
             agent_network["metadata"] = {"sample_queries": sample_queries}
 
-        # None when the network uses no MCP servers; otherwise placed in the
-        # top agent's function block below so clients (e.g. nsflow) know
-        # which MCP URLs need Authorization headers passed via sly_data.
-        sly_data_schema: dict[str, Any] | None = self.build_mcp_sly_data_schema(use_network_def, mcp_servers_auth)
+        # None when the network uses no client-token MCP servers.
+        sly_data_schema: dict[str, Any] | None = self.build_mcp_sly_data_schema(use_network_def, client_token_mcp_urls)
 
         agent_name: str = None
         agent_def: dict[str, Any] = {}

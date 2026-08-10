@@ -16,6 +16,7 @@
 
 import datetime
 import json
+from collections.abc import Collection
 from copy import copy as shallow_copy
 from typing import Any
 
@@ -141,7 +142,7 @@ class HoconAgentNetworkAssembler(AgentNetworkAssembler):
         top_agent_name: str,
         agent_network_name: str,
         sample_queries: list[str],
-        mcp_servers_auth: dict[str, bool] | None = None,
+        client_token_mcp_urls: Collection[str] | None = None,
     ) -> str:
         """
         Substitutes value from agent network definition into the template of agent network HOCON file
@@ -150,8 +151,9 @@ class HoconAgentNetworkAssembler(AgentNetworkAssembler):
         :param top_agent_name: The name of the top agent
         :param agent_network_name: The file name, without the .hocon extension
         :param sample_queries: List of sample queries for the agent network
-        :param mcp_servers_auth: Optional {MCP server URL: needs_client_token} mapping
-                driving the front man's sly_data_schema (see the base class)
+        :param client_token_mcp_urls: Optional collection of MCP server URLs whose
+                auth is client-supplied, driving the front man's sly_data_schema
+                (see the base class)
 
         :return: A full agent network HOCON as a string.
         """
@@ -161,7 +163,7 @@ class HoconAgentNetworkAssembler(AgentNetworkAssembler):
         header: str = self._build_header(agent_network_name, sample_queries)
 
         sly_data_schema_block: str = self._render_sly_data_schema_block(
-            self.build_mcp_sly_data_schema(use_network_def, mcp_servers_auth)
+            self.build_mcp_sly_data_schema(use_network_def, client_token_mcp_urls)
         )
 
         body: list[str] = []
@@ -239,9 +241,12 @@ class HoconAgentNetworkAssembler(AgentNetworkAssembler):
         :return: "" when there is no schema (leaving the template output
                 unchanged), else a block starting with the comma that
                 separates it from the description entry. JSON is valid
-                HOCON, and json.dumps output keeps the URL keys quoted and
-                cannot contain ${...} substitutions, so the fragment always
-                parses as written.
+                HOCON, and the fragment always parses as written because
+                json.dumps keeps every key and value double-quoted and
+                HOCON performs no ${...} substitution inside double-quoted
+                strings (json.dumps does NOT escape $ or { — a URL
+                containing ${...} survives verbatim, safely, only thanks to
+                the quoting).
         """
         if not schema:
             return ""

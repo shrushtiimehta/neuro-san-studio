@@ -14,7 +14,10 @@
 #
 # END COPYRIGHT
 
+from collections.abc import Collection
 from typing import Any
+
+from neuro_san.internals.validation.network.abstract_network_validator import AbstractNetworkValidator
 
 
 class AgentNetworkAssembler:
@@ -29,7 +32,7 @@ class AgentNetworkAssembler:
         top_agent_name: str,
         agent_network_name: str,
         sample_queries: list[str],
-        mcp_servers_auth: dict[str, bool] | None = None,
+        client_token_mcp_urls: Collection[str] | None = None,
     ) -> Any:
         """
         Assemble the agent network from the definition.
@@ -38,10 +41,11 @@ class AgentNetworkAssembler:
         :param top_agent_name: The name of the top agent
         :param agent_network_name: The file name, without the .hocon extension
         :param sample_queries: List of sample queries for the agent network
-        :param mcp_servers_auth: Optional {MCP server URL: needs_client_token} mapping
-                for every known MCP server (see GetMcpTool.get_mcp_servers_auth_info).
-                Drives the sly_data_schema emitted into the assembled network;
-                None or {} means no schema is emitted.
+        :param client_token_mcp_urls: Optional collection of MCP server URLs whose
+                auth is client-supplied (the conversation's sly_data http_headers
+                servers that are not configured in mcp_info.hocon). Drives the
+                sly_data_schema emitted into the assembled network; None or empty
+                means no schema is emitted.
 
         :return: Some representation of the agent network
         """
@@ -49,7 +53,7 @@ class AgentNetworkAssembler:
 
     @staticmethod
     def build_mcp_sly_data_schema(
-        network_def: dict[str, Any], mcp_servers_auth: dict[str, bool] | None
+        network_def: dict[str, Any], client_token_mcp_urls: Collection[str] | None
     ) -> dict[str, Any] | None:
         """
         Build the sly_data_schema declaring the HTTP headers the assembled
@@ -65,36 +69,40 @@ class AgentNetworkAssembler:
         connected before chat is allowed. See registries/tools/you_search.hocon
         for the hand-written reference of this exact shape.
 
-        Only servers that need a client-supplied token are declared — those
-        known from nsflow's OAuth token store rather than mcp_info.hocon
-        (the mapping computed by GetMcpTool.get_mcp_servers_auth_info).
-        Servers configured in mcp_info.hocon are omitted entirely: their
-        auth (if any) lives server-side, so a client has nothing to supply
-        for them — matching you_search.hocon, which declares only its OAuth
-        server. Every declared URL is also in `required`, so clients like
-        nsflow gate chat until the user has connected it.
+        Only servers whose auth is client-supplied are declared — the ones
+        the designing conversation itself provided headers for via sly_data
+        (nsflow injects one per connected server). Servers configured in
+        mcp_info.hocon are omitted entirely: their auth (if any) lives
+        server-side, so a client has nothing to supply for them — matching
+        you_search.hocon, which declares only its OAuth server. Every
+        declared URL is also in `required`, so clients like nsflow gate
+        chat until the user has connected it.
 
         :param network_def: Agent network definition. MCP server URLs are
-                recognized as tools-list entries present in mcp_servers_auth —
-                a set intersection, never URL pattern matching, since tools
-                lists also hold agent names and subnetwork references.
-        :param mcp_servers_auth: {MCP server URL: needs_client_token} for every
-                known MCP server, or None.
+                recognized as tools-list entries present in
+                client_token_mcp_urls — a membership test, never URL pattern
+                matching, since tools lists also hold agent names and
+                subnetwork references.
+        :param client_token_mcp_urls: MCP server URLs whose auth is
+                client-supplied, or None.
         :return: The sly_data_schema dict, or None when the network uses no
                 client-token MCP servers (no schema should be emitted at all).
         """
-        if not mcp_servers_auth:
+        if not client_token_mcp_urls:
             return None
 
         # Collect the client-token MCP URLs the network actually uses,
         # deduped in first-appearance order so the emitted schema is
-        # deterministic.
+        # deterministic. coerce_tools is the framework's guard for
+        # malformed tools shapes (a str-valued tools field reads as []
+        # instead of iterating characters), keeping this walk consistent
+        # with neuro-san's own network validators.
         used_urls: dict[str, None] = {}
         for agent in network_def.values():
             if not isinstance(agent, dict):
                 continue
-            for tool in agent.get("tools") or []:
-                if isinstance(tool, str) and mcp_servers_auth.get(tool):
+            for tool in AbstractNetworkValidator.coerce_tools(agent):
+                if isinstance(tool, str) and tool in client_token_mcp_urls:
                     used_urls[tool] = None
         if not used_urls:
             return None
