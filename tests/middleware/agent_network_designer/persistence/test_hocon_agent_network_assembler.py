@@ -109,7 +109,10 @@ class TestHoconAssemblerSlyDataSchema:
     def test_a_non_ascii_url_key_round_trips_verbatim(self):
         """ensure_ascii=False keeps a non-ASCII URL key matching the tools list;
         an escaped key would read back as literal text pyhocon never decodes."""
-        unicode_url = "https://exämple.com/mcp"
+        # The non-ASCII character must live in the path, not the host: CI
+        # link-checks string literals (lychee) and skips example.com hosts,
+        # but a non-ASCII host punycodes to a real, checkable domain.
+        unicode_url = "https://example.com/mçp"
         network_def = {"front_man": {"description": "top", "instructions": "Go.", "tools": [unicode_url]}}
         assembler = HoconAgentNetworkAssembler(demo_mode=False)
         text = asyncio.run(
@@ -120,7 +123,7 @@ class TestHoconAssemblerSlyDataSchema:
 
         # The raw character survives in the emitted text, not a \uXXXX escape...
         assert unicode_url in text
-        assert "ex\\u00e4mple" not in text
+        assert "m\\u00e7p" not in text
 
         # ...and parses back to the same key the tools list uses.
         http_headers = parse(text)["tools"][0]["function"]["sly_data_schema"]["properties"]["http_headers"]
