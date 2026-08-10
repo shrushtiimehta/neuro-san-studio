@@ -36,9 +36,10 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 OAUTH_URL = "https://oauth.example.com/mcp"
 FILE_AUTH_URL = "https://file-auth.example.com/mcp"
 
-# Client-token servers (from the conversation's sly_data http_headers);
-# FILE_AUTH_URL is a file-configured server and deliberately not in it.
-CLIENT_TOKEN_MCP_URLS: list[str] = [OAUTH_URL]
+# Client-token servers (from the conversation's sly_data http_headers), each
+# mapped to the header names it supplied; FILE_AUTH_URL is a file-configured
+# server and deliberately not in it.
+CLIENT_TOKEN_MCP_HEADERS: dict[str, list[str]] = {OAUTH_URL: ["Authorization"]}
 
 NETWORK_DEF: dict = {
     "front_man": {"description": "top", "instructions": "Coordinate.", "tools": ["helper", OAUTH_URL]},
@@ -46,7 +47,7 @@ NETWORK_DEF: dict = {
 }
 
 
-def assemble(client_token_mcp_urls: list[str] | None) -> dict:
+def assemble(client_token_mcp_headers: dict[str, list[str]] | None) -> dict:
     """
     Assemble the test network into a deployable config dict (real templates).
 
@@ -61,7 +62,7 @@ def assemble(client_token_mcp_urls: list[str] | None) -> dict:
     try:
         return asyncio.run(
             assembler.assemble_agent_network(
-                NETWORK_DEF, "front_man", "test_net", ["query one"], client_token_mcp_urls
+                NETWORK_DEF, "front_man", "test_net", ["query one"], client_token_mcp_headers
             )
         )
     finally:
@@ -73,7 +74,7 @@ class TestDeployableAssemblerSlyDataSchema:
 
     def test_front_man_declares_the_schema(self):
         """The top agent's function block carries the nsflow contract."""
-        agent_network = assemble(CLIENT_TOKEN_MCP_URLS)
+        agent_network = assemble(CLIENT_TOKEN_MCP_HEADERS)
 
         front_man = agent_network["tools"][0]
         assert front_man["name"] == "front_man"
@@ -85,7 +86,7 @@ class TestDeployableAssemblerSlyDataSchema:
 
     def test_non_top_agents_carry_no_schema(self):
         """Only the front man talks to clients; helpers must not declare one."""
-        agent_network = assemble(CLIENT_TOKEN_MCP_URLS)
+        agent_network = assemble(CLIENT_TOKEN_MCP_HEADERS)
         for agent in agent_network["tools"][1:]:
             function = agent.get("function")
             if isinstance(function, dict):
@@ -93,6 +94,6 @@ class TestDeployableAssemblerSlyDataSchema:
 
     def test_no_client_urls_means_no_schema(self):
         """Without client-token servers the function block stays as templated."""
-        for client_urls in (None, []):
-            agent_network = assemble(client_urls)
+        for client_headers in (None, {}):
+            agent_network = assemble(client_headers)
             assert "sly_data_schema" not in agent_network["tools"][0]["function"]

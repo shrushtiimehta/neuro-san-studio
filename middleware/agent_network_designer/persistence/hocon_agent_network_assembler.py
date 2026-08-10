@@ -17,6 +17,7 @@
 import datetime
 import json
 from collections.abc import Collection
+from collections.abc import Mapping
 from copy import copy as shallow_copy
 from typing import Any
 
@@ -142,7 +143,7 @@ class HoconAgentNetworkAssembler(AgentNetworkAssembler):
         top_agent_name: str,
         agent_network_name: str,
         sample_queries: list[str],
-        client_token_mcp_urls: Collection[str] | None = None,
+        client_token_mcp_headers: Mapping[str, Collection[str]] | None = None,
     ) -> str:
         """
         Substitutes value from agent network definition into the template of agent network HOCON file
@@ -151,9 +152,9 @@ class HoconAgentNetworkAssembler(AgentNetworkAssembler):
         :param top_agent_name: The name of the top agent
         :param agent_network_name: The file name, without the .hocon extension
         :param sample_queries: List of sample queries for the agent network
-        :param client_token_mcp_urls: Optional collection of MCP server URLs whose
-                auth is client-supplied, driving the front man's sly_data_schema
-                (see the base class)
+        :param client_token_mcp_headers: Optional mapping of client-token MCP
+                server URL to the header names the conversation supplied for it,
+                driving the front man's sly_data_schema (see the base class)
 
         :return: A full agent network HOCON as a string.
         """
@@ -163,7 +164,7 @@ class HoconAgentNetworkAssembler(AgentNetworkAssembler):
         header: str = self._build_header(agent_network_name, sample_queries)
 
         sly_data_schema_block: str = self._render_sly_data_schema_block(
-            self.build_mcp_sly_data_schema(use_network_def, client_token_mcp_urls)
+            self.build_mcp_sly_data_schema(use_network_def, client_token_mcp_headers)
         )
 
         body: list[str] = []
@@ -246,12 +247,15 @@ class HoconAgentNetworkAssembler(AgentNetworkAssembler):
                 HOCON performs no ${...} substitution inside double-quoted
                 strings (json.dumps does NOT escape $ or { — a URL
                 containing ${...} survives verbatim, safely, only thanks to
-                the quoting).
+                the quoting). ensure_ascii=False keeps a non-ASCII URL key
+                as its raw character: pyhocon does not decode \\uXXXX
+                escapes, so an escaped key would read back as literal text
+                that no longer matches the raw URL in the tools list.
         """
         if not schema:
             return ""
         indent: str = " " * 16
-        lines: list[str] = json.dumps(schema, indent=4).splitlines()
+        lines: list[str] = json.dumps(schema, indent=4, ensure_ascii=False).splitlines()
         body: str = "\n".join([lines[0]] + [indent + line for line in lines[1:]])
         return f',\n{indent}"sly_data_schema": {body}'
 

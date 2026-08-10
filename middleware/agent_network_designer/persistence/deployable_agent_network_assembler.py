@@ -15,6 +15,7 @@
 # END COPYRIGHT
 
 from collections.abc import Collection
+from collections.abc import Mapping
 from copy import copy as shallow_copy
 from copy import deepcopy
 from typing import Any
@@ -58,7 +59,7 @@ class DeployableAgentNetworkAssembler(AgentNetworkAssembler):
         top_agent_name: str,
         agent_network_name: str,
         sample_queries: list[str],
-        client_token_mcp_urls: Collection[str] | None = None,
+        client_token_mcp_headers: Mapping[str, Collection[str]] | None = None,
     ) -> dict[str, Any]:
         """
         Assemble the agent network from the definition.
@@ -67,9 +68,9 @@ class DeployableAgentNetworkAssembler(AgentNetworkAssembler):
         :param top_agent_name: The name of the top agent
         :param agent_network_name: The file name, without the .hocon extension
         :param sample_queries: List of sample queries for the agent network
-        :param client_token_mcp_urls: Optional collection of MCP server URLs whose
-                auth is client-supplied, driving the front man's sly_data_schema
-                (see the base class)
+        :param client_token_mcp_headers: Optional mapping of client-token MCP
+                server URL to the header names the conversation supplied for it,
+                driving the front man's sly_data_schema (see the base class)
 
         :return: Some representation of the agent network
         """
@@ -94,7 +95,9 @@ class DeployableAgentNetworkAssembler(AgentNetworkAssembler):
             agent_network["metadata"] = {"sample_queries": sample_queries}
 
         # None when the network uses no client-token MCP servers.
-        sly_data_schema: dict[str, Any] | None = self.build_mcp_sly_data_schema(use_network_def, client_token_mcp_urls)
+        sly_data_schema: dict[str, Any] | None = self.build_mcp_sly_data_schema(
+            use_network_def, client_token_mcp_headers
+        )
 
         agent_name: str = None
         agent_def: dict[str, Any] = {}

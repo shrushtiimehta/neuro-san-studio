@@ -268,10 +268,18 @@ class AgentNetworkPersistenceMiddleware(AgentMiddleware):
         # headers for via sly_data (nsflow injects one per connected server
         # when chatting with the designer) that are not file-configured.
         # These drive the generated network's sly_data_schema.
-        client_token_mcp_urls: list[str] = [
-            url for url in GetMcpTool.sly_data_http_header_urls(self.sly_data) if url not in file_servers
-        ]
-        mcp_servers: list[str] = file_servers + client_token_mcp_urls
+        # Map each client-token URL to the header names the conversation
+        # supplied for it (names only, never values), so the generated
+        # sly_data_schema declares the actual headers a server needs rather
+        # than assuming "Authorization". sly_data_http_header_urls only
+        # yields URLs whose sly_data["http_headers"][url] is a dict, so the
+        # index below is safe.
+        client_token_mcp_headers: dict[str, list[str]] = {
+            url: [name for name in self.sly_data["http_headers"][url] if isinstance(name, str)]
+            for url in GetMcpTool.sly_data_http_header_urls(self.sly_data)
+            if url not in file_servers
+        }
+        mcp_servers: list[str] = file_servers + list(client_token_mcp_headers)
         persistor: AgentNetworkPersistor = AgentNetworkPersistorFactory.create_persistor(
             {"reservationist": self.reservationist},
             WRITE_TO_FILE,
@@ -288,7 +296,7 @@ class AgentNetworkPersistenceMiddleware(AgentMiddleware):
             top_agent_name,
             agent_network_name,
             sample_queries,
-            client_token_mcp_urls=client_token_mcp_urls,
+            client_token_mcp_headers=client_token_mcp_headers,
         )
         self.logger.info("The resulting agent network content: \n %s", persisted_content)
         self.sly_data[AGENT_NETWORK_HOCON_TEXT] = persisted_content
@@ -307,7 +315,7 @@ class AgentNetworkPersistenceMiddleware(AgentMiddleware):
                 top_agent_name,
                 agent_network_name,
                 sample_queries,
-                client_token_mcp_urls=client_token_mcp_urls,
+                client_token_mcp_headers=client_token_mcp_headers,
             )
         # Persist the agent network
         persisted_reference: str | list[dict[str, Any]] = await persistor.async_persist(
