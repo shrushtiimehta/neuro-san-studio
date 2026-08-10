@@ -189,6 +189,29 @@ class TestSlyDataHttpHeaderUrls(TestCase):
         }
         self.assertEqual(GetMcpTool.sly_data_http_header_urls(sly_data), ["https://good.example/mcp"])
 
+    def test_non_http_urls_are_skipped(self):
+        """Only http(s) MCP URLs count; a '/'-path or other scheme is not a server."""
+        sly_data = {
+            "http_headers": {
+                "/internal_admin_network": {"Authorization": "Bearer x"},
+                "ftp://host/mcp": {"Authorization": "Bearer y"},
+                "https://ok.example/mcp": {"Authorization": "Bearer z"},
+            }
+        }
+        self.assertEqual(GetMcpTool.sly_data_http_header_urls(sly_data), ["https://ok.example/mcp"])
+
+    def test_urls_without_a_usable_header_are_skipped(self):
+        """An empty dict, a blank value, or a non-string value supplies no credential."""
+        sly_data = {
+            "http_headers": {
+                "https://empty.example/mcp": {},
+                "https://blank.example/mcp": {"Authorization": "   "},
+                "https://nonstr.example/mcp": {"Authorization": 123},
+                "https://ok.example/mcp": {"Authorization": "Bearer tok"},
+            }
+        }
+        self.assertEqual(GetMcpTool.sly_data_http_header_urls(sly_data), ["https://ok.example/mcp"])
+
 
 class TestGetMcpToolDescriptions(TestCase):
     """Publish/degrade policy for the shared cache, plus the sly_data path."""

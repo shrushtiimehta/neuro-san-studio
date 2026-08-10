@@ -510,9 +510,15 @@ class GetMcpTool(CodedTool):
         an OAuth-capable client injects (nsflow injects one for every
         connected server when chatting with the Agent Network Designer; the
         designer's allow.to_downstream forwards the key to this network).
-        Tolerant of malformed shapes: a missing/non-dict http_headers reads
-        as no URLs, and non-string keys or non-dict header values are
-        skipped rather than raising — chat clients control this input.
+
+        Only http(s) URLs that carry at least one usable header (a string
+        name with a non-blank string value — see _has_usable_header) are
+        returned; everything else is skipped rather than raising, since chat
+        clients control this input. That covers a missing/non-dict
+        http_headers, a non-string or non-http(s) key (which must never
+        reach URL validation as an accepted reference), a non-dict header
+        value, and a header-less or blank-valued entry (which supplies no
+        credential to fetch with, declare, or gate on).
 
         :param sly_data: The conversation's sly_data (may be None).
         :return: URLs in first-appearance order. Values are URLs only — no
@@ -521,7 +527,37 @@ class GetMcpTool(CodedTool):
         http_headers: Any = sly_data.get("http_headers") if isinstance(sly_data, dict) else None
         if not isinstance(http_headers, dict):
             return []
-        return [url for url, headers in http_headers.items() if isinstance(url, str) and isinstance(headers, dict)]
+        return [
+            url
+            for url, headers in http_headers.items()
+            if isinstance(url, str)
+            and url.startswith(("http://", "https://"))
+            and isinstance(headers, dict)
+            and GetMcpTool._has_usable_header(headers)
+        ]
+
+    @staticmethod
+    def _has_usable_header(headers: dict[Any, Any]) -> bool:
+        """
+        Whether a per-URL header dict carries at least one usable credential:
+        a string name that is not blank with a string value that is not
+        blank after stripping.
+
+        This is the classification counterpart to _sanitized_headers (which
+        cleans the values actually sent): a server counts as client-token
+        only when it has such a header, so an empty dict, non-string
+        names/values, and blank values never make the fetch, the generated
+        schema, or URL validation treat a credential-less entry as a real
+        server.
+
+        :param headers: A per-URL header dict from sly_data["http_headers"].
+        :return: True if any header is usable. Reads names/values only for
+                the check — no header material leaves this function.
+        """
+        return any(
+            isinstance(name, str) and name.strip() and isinstance(value, str) and value.strip()
+            for name, value in headers.items()
+        )
 
     @staticmethod
     def _sanitized_headers(server: str, headers: dict[str, Any]) -> dict[str, str]:
