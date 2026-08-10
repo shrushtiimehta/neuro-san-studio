@@ -280,8 +280,12 @@ class GetMcpTool(CodedTool):
         stale or revoked token), which is the one hint an operator needs to
         pick the right remedy (re-auth in the client vs. a server outage).
         Unwrap the group and append the leaf exceptions. Leaf messages from
-        this stack (httpx/mcp) carry the URL and status line, never request
-        headers, so no token material can reach the log.
+        this stack usually carry only the URL and status line, but a header
+        VALIDATION failure (e.g. h11's LocalProtocolError) can embed the raw
+        header value, so the caller validates the values it sends up front
+        (see _sanitized_headers) and redacts them from this string before
+        logging (see _redact_values) — this renderer itself makes no such
+        guarantee.
 
         :param error: The exception caught by the fetch.
         :return: str(error), plus "[Type: message; ...]" for group leaves.
@@ -297,6 +301,34 @@ class GetMcpTool(CodedTool):
             else:
                 leaves.append(f"{type(sub).__name__}: {sub}")
         return f"{error} [{'; '.join(leaves)}]"
+
+    @staticmethod
+    def _redact_values(text: str, headers: dict[str, str] | None) -> str:
+        """
+        Mask any header value we sent out of a log-bound string.
+
+        Defense in depth for the drop-path warning. _sanitized_headers
+        already blocks the values that make the HTTP stack raise a
+        value-bearing error, but no exception renderer should be trusted
+        with token material: an illegal header value surfaces as its bytes
+        repr (h11 formats it b'...'), so each value is masked in the plain,
+        str-repr, and bytes-repr forms an error might use — longest first so
+        a shorter form cannot leave a fragment behind.
+
+        :param text: The rendered error summary bound for the log.
+        :param headers: The header dict handed to this fetch, or None (the
+                file-configured path, whose values live in the adapter and
+                are operator-controlled, not client-supplied).
+        :return: text with every non-empty header value we sent masked.
+        """
+        if not headers:
+            return text
+        for value in headers.values():
+            if not isinstance(value, str) or not value:
+                continue
+            for form in (repr(value.encode()), repr(value), value):
+                text = text.replace(form, "***")
+        return text
 
     @staticmethod
     async def _fetch_tool_descriptions(
@@ -343,7 +375,10 @@ class GetMcpTool(CodedTool):
             # conversation's listing of the healthy servers. This warning is
             # the only trace of a dropped server, so surface group leaves
             # (see _error_summary).
-            logger.warning("Error: Failed to load tools from %s. %s", server, GetMcpTool._error_summary(error))
+            # Redact the values we sent (sly_data path): a header
+            # validation error echoes the raw value, which may be a token.
+            summary: str = GetMcpTool._redact_values(GetMcpTool._error_summary(error), headers)
+            logger.warning("Error: Failed to load tools from %s. %s", server, summary)
             return server, None
         return server, description
 
@@ -489,6 +524,40 @@ class GetMcpTool(CodedTool):
         return [url for url, headers in http_headers.items() if isinstance(url, str) and isinstance(headers, dict)]
 
     @staticmethod
+    def _sanitized_headers(server: str, headers: dict[str, Any]) -> dict[str, str]:
+        """
+        Clean a conversation's per-URL header dict before it reaches the
+        HTTP stack.
+
+        A value with control characters — most often a token read with a
+        trailing newline — makes the streamable-http client raise before
+        the request, and that exception embeds the raw value, so an
+        unvalidated header could put token material on the drop path. Outer
+        whitespace is stripped (the common, recoverable case, so a
+        newline-tailed token still authenticates); a value still holding a
+        control character is genuinely malformed and dropped, logging the
+        header NAME only. Non-string names/values are skipped. A value is
+        never logged.
+
+        :param server: The MCP server URL, for the drop warning.
+        :param headers: The conversation's per-URL header dict (from
+                sly_data["http_headers"][server]).
+        :return: The cleaned headers to hand to the adapter; may be empty,
+                in which case the fetch runs unauthenticated and a private
+                server simply drops out of the listing (attempt-and-drop).
+        """
+        cleaned: dict[str, str] = {}
+        for name, value in headers.items():
+            if not isinstance(name, str) or not isinstance(value, str):
+                continue
+            stripped: str = value.strip()
+            if any((ord(char) < 0x20 and char != "\t") or ord(char) == 0x7F for char in stripped):
+                logger.warning("Dropping malformed MCP header %r for %s (illegal value characters).", name, server)
+                continue
+            cleaned[name] = stripped
+        return cleaned
+
+    @staticmethod
     async def _fetch_sly_data_tool_descriptions(sly_data: dict[str, Any], exclude: set[str]) -> dict[str, str]:
         """
         Fetch tool listings for the conversation's sly_data http_headers
@@ -517,9 +586,16 @@ class GetMcpTool(CodedTool):
         http_headers: dict[str, Any] = sly_data["http_headers"]
         fetch_timeout: float | None = GetMcpTool._mcp_tools_fetch_timeout_seconds()
         # return_exceptions=False is safe here because
-        # _fetch_tool_descriptions swallows its own errors.
+        # _fetch_tool_descriptions swallows its own errors. Values are
+        # sanitized per URL first (see _sanitized_headers) so a malformed
+        # header can neither raise a value-bearing error nor reach a log.
         results = await asyncio.gather(
-            *[GetMcpTool._fetch_tool_descriptions(url, fetch_timeout, http_headers[url]) for url in urls]
+            *[
+                GetMcpTool._fetch_tool_descriptions(
+                    url, fetch_timeout, GetMcpTool._sanitized_headers(url, http_headers[url])
+                )
+                for url in urls
+            ]
         )
         return {server: description for server, description in results if description is not None}
 

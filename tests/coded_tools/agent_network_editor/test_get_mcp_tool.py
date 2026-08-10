@@ -352,6 +352,18 @@ class TestGetMcpToolDescriptions(TestCase):
             self.assertEqual(self.fetch_log.count(server), 1)
         self.assertEqual(self.fetch_log.count(CLIENT_URL), 2)
 
+    def test_sly_data_header_values_are_sanitized_before_fetch(self):
+        """A token with surrounding whitespace is stripped before it is sent."""
+        tool: GetMcpTool = GetMcpTool.__new__(GetMcpTool)
+        self.listings[CLIENT_URL] = f"tools of {CLIENT_URL}"
+        sly_data = {"http_headers": {CLIENT_URL: {"Authorization": "  Bearer tok-0\n"}}}
+
+        with mock.patch.dict(os.environ, {TTL_ENV: "100000"}), self._patched_servers(), self._patched_fetches():
+            asyncio.run(tool.async_invoke(args={}, sly_data=sly_data))
+
+        # The adapter receives the trimmed value, not the raw client input.
+        self.assertEqual(self.headers_log[CLIENT_URL], {"Authorization": "Bearer tok-0"})
+
     def test_registry_covers_both_mcp_caches(self):
         """globals' REGISTRY triples must resolve now that get_mcp_tool is imported."""
         with mock.patch.dict(os.environ, {TTL_ENV: "100000"}), self._patched_servers(), self._patched_fetches():
@@ -443,7 +455,7 @@ class TestFetchToolDescriptions(TestCase):
         self.assertIn("401 Unauthorized", summary)
         self.assertIn("KeyError", summary)
 
-        async def raises_the_group(_server: str, headers: dict | None = None) -> list:  # pylint: disable=unused-argument
+        async def raises_the_group(_server: str, headers: dict | None = None) -> list:
             raise nested
 
         with self._patched_adapter(raises_the_group), self.assertLogs(level="WARNING") as captured:
@@ -451,3 +463,75 @@ class TestFetchToolDescriptions(TestCase):
 
         self.assertIsNone(description)
         self.assertIn("401 Unauthorized", "\n".join(captured.output))
+
+    def test_a_leaked_header_value_is_redacted_from_the_failure_log(self):
+        """A value-bearing error (mimicking h11) must not put the token in the log."""
+        token = "Bearer FAKE-SECRET-xyz\n"
+
+        async def raises_with_value(_server: str, headers: dict | None = None) -> list:
+            # h11 renders an illegal header value as its bytes repr.
+            raise ValueError(f"Illegal header value {token.encode()!r}")
+
+        with self._patched_adapter(raises_with_value), self.assertLogs(level="WARNING") as captured:
+            _server, description = asyncio.run(
+                GetMcpTool._fetch_tool_descriptions("https://auth.example", 5.0, headers={"Authorization": token})
+            )
+
+        logged = "\n".join(captured.output)
+        self.assertIsNone(description)
+        self.assertNotIn("FAKE-SECRET-xyz", logged)
+        self.assertIn("***", logged)
+
+
+class TestSanitizedHeaders(TestCase):
+    """Boundary cleaning of the per-conversation header dict before it is sent."""
+
+    def test_outer_whitespace_is_stripped(self):
+        """A newline-tailed token is trimmed so it still authenticates."""
+        cleaned = GetMcpTool._sanitized_headers(CLIENT_URL, {"Authorization": "  Bearer tok\n"})
+        self.assertEqual(cleaned, {"Authorization": "Bearer tok"})
+
+    def test_a_clean_value_passes_through_unchanged(self):
+        """A well-formed value is returned as-is."""
+        cleaned = GetMcpTool._sanitized_headers(CLIENT_URL, {"Authorization": "Bearer tok", "X-Api-Key": "k"})
+        self.assertEqual(cleaned, {"Authorization": "Bearer tok", "X-Api-Key": "k"})
+
+    def test_a_mid_value_tab_is_allowed(self):
+        """Tab is a legal header-value character; only other controls are illegal."""
+        cleaned = GetMcpTool._sanitized_headers(CLIENT_URL, {"X-Api-Key": "a\tb"})
+        self.assertEqual(cleaned, {"X-Api-Key": "a\tb"})
+
+    def test_an_embedded_control_char_drops_the_header_and_logs_name_only(self):
+        """A value with an embedded control char is dropped; the value never logs."""
+        with self.assertLogs(level="WARNING") as captured:
+            cleaned = GetMcpTool._sanitized_headers(CLIENT_URL, {"Authorization": "Bearer\nSECRET"})
+
+        self.assertEqual(cleaned, {})
+        logged = "\n".join(captured.output)
+        self.assertIn("Authorization", logged)
+        self.assertNotIn("SECRET", logged)
+
+    def test_non_string_names_and_values_are_skipped(self):
+        """Malformed shapes are dropped rather than raising."""
+        cleaned = GetMcpTool._sanitized_headers(CLIENT_URL, {"Authorization": 123, 42: "x", "X-Api-Key": "k"})
+        self.assertEqual(cleaned, {"X-Api-Key": "k"})
+
+
+class TestRedactValues(TestCase):
+    """The drop-path log backstop that masks any header value we sent."""
+
+    def test_masks_plain_str_repr_and_bytes_repr_forms(self):
+        """A value must not survive in any form an exception renderer might use."""
+        value = "Bearer FAKE-SECRET-xyz\n"
+        text = f"raw={value} str={value!r} bytes={value.encode()!r}"
+        redacted = GetMcpTool._redact_values(text, {"Authorization": value})
+        self.assertNotIn("FAKE-SECRET-xyz", redacted)
+        self.assertIn("***", redacted)
+
+    def test_none_headers_pass_through(self):
+        """The file-configured path (headers=None) leaves the text untouched."""
+        self.assertEqual(GetMcpTool._redact_values("401 Unauthorized", None), "401 Unauthorized")
+
+    def test_empty_values_are_ignored(self):
+        """An empty header value must not blank-mask unrelated text."""
+        self.assertEqual(GetMcpTool._redact_values("some text", {"X": ""}), "some text")
