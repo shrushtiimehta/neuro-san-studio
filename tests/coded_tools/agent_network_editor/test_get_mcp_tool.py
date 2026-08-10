@@ -387,6 +387,37 @@ class TestGetMcpToolDescriptions(TestCase):
         # The adapter receives the trimmed value, not the raw client input.
         self.assertEqual(self.headers_log[CLIENT_URL], {"Authorization": "Bearer tok-0"})
 
+    def test_client_listings_do_not_leak_across_conversations(self):
+        """Two conversations' client-token servers stay isolated: neither
+        conversation's sly_data servers may surface in the other's output,
+        because those listings are fetched per call and never cached."""
+        tool: GetMcpTool = GetMcpTool.__new__(GetMcpTool)
+        alice_url = "https://alice.example/mcp"
+        bob_url = "https://bob.example/mcp"
+        self.listings[alice_url] = "tools of alice"
+        self.listings[bob_url] = "tools of bob"
+        alice_sly = {"http_headers": {alice_url: {"Authorization": "Bearer alice-tok"}}}
+        bob_sly = {"http_headers": {bob_url: {"Authorization": "Bearer bob-tok"}}}
+
+        # Back-to-back in one process, sharing the file-descriptions cache.
+        with mock.patch.dict(os.environ, {TTL_ENV: "100000"}), self._patched_servers(), self._patched_fetches():
+            result_alice = asyncio.run(tool.async_invoke(args={}, sly_data=alice_sly))
+            result_bob = asyncio.run(tool.async_invoke(args={}, sly_data=bob_sly))
+
+        # Each conversation sees its own client server...
+        self.assertIn("tools of alice", result_alice)
+        self.assertIn("tools of bob", result_bob)
+        # ...and never the other conversation's.
+        self.assertNotIn("tools of bob", result_alice)
+        self.assertNotIn("tools of alice", result_bob)
+        # The shared, file-configured servers appear in both (same for everyone).
+        for server in MCP_SERVERS:
+            self.assertIn(f"tools of {server}", result_alice)
+            self.assertIn(f"tools of {server}", result_bob)
+        # Neither token reaches the LLM-visible output.
+        self.assertNotIn("alice-tok", result_alice)
+        self.assertNotIn("bob-tok", result_bob)
+
     def test_registry_covers_both_mcp_caches(self):
         """globals' REGISTRY triples must resolve now that get_mcp_tool is imported."""
         with mock.patch.dict(os.environ, {TTL_ENV: "100000"}), self._patched_servers(), self._patched_fetches():
