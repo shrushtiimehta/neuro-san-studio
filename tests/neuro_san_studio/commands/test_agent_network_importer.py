@@ -48,7 +48,7 @@ class TestImportNetwork:
         (registries / "basic").mkdir(parents=True)
         (registries / "basic" / "music_nerd.hocon").write_text('{ "tools": [] }\n')
         # Shared registry includes that the importer always copies.
-        for shared in ("aaosa.hocon", "aaosa_basic.hocon", "aaosa_basic_debug.hocon"):
+        for shared in AgentNetworkImporter.SHARED_INCLUDES:
             (registries / shared).write_text(f"# {shared}\n")
 
         coded_tools = source_dir / "coded_tools" / "music_nerd"
@@ -100,7 +100,7 @@ class TestImportNetwork:
         (registries / "agent_network_designer.hocon").write_text('{ "tools": [] }\n')
         (registries / "advanced_calculator.hocon").write_text('{ "tools": [] }\n')
         (registries / "agentforce_adapter.hocon").write_text('{ "tools": [] }\n')
-        for shared in ("aaosa.hocon", "aaosa_basic.hocon", "aaosa_basic_debug.hocon"):
+        for shared in AgentNetworkImporter.SHARED_INCLUDES:
             (registries / shared).write_text("")
 
         importer = AgentNetworkImporter(str(source_dir), str(target_dir))
@@ -463,7 +463,7 @@ class TestMcpInfoMerge:
         target_dir.mkdir()
         (source_dir / "registries" / "basic").mkdir(parents=True)
         (source_dir / "registries" / "basic" / "mcp_user.hocon").write_text('{ "tools": [] }\n')
-        for shared in ("aaosa.hocon", "aaosa_basic.hocon", "aaosa_basic_debug.hocon"):
+        for shared in AgentNetworkImporter.SHARED_INCLUDES:
             (source_dir / "registries" / shared).write_text("")
         (source_dir / "mcp").mkdir()
         (source_dir / "mcp" / "mcp_info.hocon").write_text(
@@ -582,7 +582,7 @@ class TestForceOverwrite:
         registries.mkdir(parents=True)
         (registries / "music_nerd.hocon").write_text("NEW\n")
         # SHARED_INCLUDES are always copied; create empty stand-ins so import_network doesn't warn.
-        for shared in ("aaosa.hocon", "aaosa_basic.hocon", "aaosa_basic_debug.hocon"):
+        for shared in AgentNetworkImporter.SHARED_INCLUDES:
             (source_dir / "registries" / shared).write_text("")
 
         target_dir = tmp_path / "target"

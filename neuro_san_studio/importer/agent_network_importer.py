@@ -107,7 +107,12 @@ class AgentNetworkImporter:
     # These aren't agent networks themselves so the dependency walker doesn't see them, but
     # almost every network in the basic/industry/experimental groups includes one. Copy them
     # alongside any imported network. (llm_config is generated fresh by `ns init`, not copied.)
-    SHARED_INCLUDES = ("aaosa.hocon", "aaosa_basic.hocon", "aaosa_basic_debug.hocon")
+    SHARED_INCLUDES = (
+        "aaosa.hocon",
+        "aaosa_basic.hocon",
+        "aaosa_basic_debug.hocon",
+        "expertise_scoping_instructions.hocon",
+    )
 
     def _register_manifest_entry(self, result: ImportResult, registries_relative: str) -> None:
         """Append ``registries_relative`` to ``result.manifest_entries`` unless it's a shared

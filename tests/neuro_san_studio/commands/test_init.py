@@ -170,6 +170,7 @@ class TestRunFlow:
         assert (tmp_path / "registries" / "aaosa.hocon").is_file()
         assert (tmp_path / "registries" / "aaosa_basic.hocon").is_file()
         assert (tmp_path / "registries" / "aaosa_basic_debug.hocon").is_file()
+        assert (tmp_path / "registries" / "expertise_scoping_instructions.hocon").is_file()
         assert (tmp_path / "registries" / "manifest.hocon").read_text().strip().startswith("{")
         # registries/generated/ must exist with an empty manifest so the include in the
         # main manifest resolves before agent_network_designer ever runs.
@@ -337,6 +338,22 @@ class TestRunFlow:
         self._run_init(tmp_path, monkeypatch)
         self._assert_matches_template(
             tmp_path, "aaosa_basic_debug.hocon", "registries/aaosa_basic_debug.hocon", "registries"
+        )
+
+    def test_expertise_scoping_instructions_sourced_from_registries(
+        self, tmp_path: Path, monkeypatch: MonkeyPatch
+    ) -> None:
+        """expertise_scoping_instructions.hocon should be copied from the registries package.
+
+        The scaffolded music_nerd.hocon includes it and substitutes
+        ``${expertise_scoping_instructions}``, so a project missing this file fails to parse.
+        """
+        self._run_init(tmp_path, monkeypatch)
+        self._assert_matches_template(
+            tmp_path,
+            "expertise_scoping_instructions.hocon",
+            "registries/expertise_scoping_instructions.hocon",
+            "registries",
         )
 
     def test_manifest_sourced_from_templates(self, tmp_path: Path, monkeypatch: MonkeyPatch) -> None:

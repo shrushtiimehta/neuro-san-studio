@@ -74,7 +74,12 @@ class InitCommand:  # pylint: disable=too-few-public-methods
         # Shared registry-level HOCONs that AAOSA-style networks include. Most networks in
         # the basic/industry/experimental groups depend on at least one of these, so
         # scaffolding them up front means `ns import <group>` works without surprises.
-        for shared in ("aaosa.hocon", "aaosa_basic.hocon", "aaosa_basic_debug.hocon"):
+        for shared in (
+            "aaosa.hocon",
+            "aaosa_basic.hocon",
+            "aaosa_basic_debug.hocon",
+            "expertise_scoping_instructions.hocon",
+        ):
             self._copy_template(shared, os.path.join("registries", shared), package="registries")
         self._copy_template("mcp_info.hocon", os.path.join("mcp", "mcp_info.hocon"), package="neuro_san_studio.mcp")
         self._copy_template("plugins.hocon", os.path.join("config", "plugins.hocon"))
