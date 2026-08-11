@@ -217,6 +217,17 @@ class McpHeaderHygiene:
         for value in headers.values():
             if not isinstance(value, str) or not value:
                 continue
-            for form in (repr(value.encode()), repr(value), value):
+            try:
+                forms: tuple[str, ...] = (repr(value.encode()), repr(value), value)
+            except UnicodeEncodeError:
+                # A client-controlled value can hold a lone surrogate, which
+                # str.encode() rejects. Such a value has no bytes form in the
+                # error text either — the HTTP stack could not have rendered
+                # one — so masking the str forms is complete, and redaction
+                # itself must never raise (it runs inside the fetch's
+                # except handler, where an escape would fail the whole
+                # gathered listing).
+                forms = (repr(value), value)
+            for form in forms:
                 text = text.replace(form, "***")
         return text

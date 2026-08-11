@@ -160,6 +160,18 @@ class TestRedactValues(TestCase):
         self.assertNotIn("FAKE-SECRET-xyz", redacted)
         self.assertIn("***", redacted)
 
+    def test_a_value_that_cannot_utf8_encode_still_redacts_without_raising(self):
+        """A client-controlled value can hold a lone surrogate, which
+        str.encode() rejects. Redaction runs inside the fetch's except
+        handler — raising there would fail the whole gathered listing — so
+        it must skip the impossible bytes form and still mask the str
+        forms."""
+        value = "Bearer FAKE-SECRET-\ud800"
+        text = f"raw={value} str={value!r}"
+        redacted = McpHeaderHygiene.redact_values(text, {"Authorization": value})
+        self.assertNotIn("FAKE-SECRET", redacted)
+        self.assertIn("***", redacted)
+
     def test_none_headers_pass_through(self):
         """The file-configured path (headers=None) leaves the text untouched."""
         self.assertEqual(McpHeaderHygiene.redact_values("401 Unauthorized", None), "401 Unauthorized")
