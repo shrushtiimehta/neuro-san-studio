@@ -37,6 +37,19 @@ _HEADER_NAME_RE: re.Pattern[str] = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
 # the plain str(error) rendering.
 _EXCEPTION_GROUP_TYPES: tuple[type[BaseException], ...] = (BaseExceptionGroup,) if sys.version_info >= (3, 11) else ()
 
+# h11's send-time validation embeds the offending raw header material in
+# its message ("Illegal header name b'...'" / "Illegal header value
+# b'...'") — the one known error shape that carries a header value
+# verbatim. redact_values masks this shape by pattern, unconditionally:
+# exact-value masking cannot cover the file-configured path, whose header
+# values live inside the MCP adapter and are never handed to this module.
+# The second group matches one Python str/bytes repr (either quote style,
+# escapes included), so masking stops at the repr's closing quote and the
+# rest of the message — other group leaves, status text — stays intact.
+_VALUE_BEARING_MESSAGE_RE: re.Pattern[str] = re.compile(
+    r"(Illegal header (?:name|value) )b?('(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\")"
+)
+
 logger = AndLogger(logging.getLogger(__name__))
 
 
@@ -211,22 +224,30 @@ class McpHeaderHygiene:
     @staticmethod
     def redact_values(text: str, headers: dict[str, str] | None) -> str:
         """
-        Mask any header value we sent out of a log-bound string.
+        Mask header material out of a log-bound string.
 
-        Defense in depth for the drop-path warning. sanitized_headers
-        already blocks the values that make the HTTP stack raise a
-        value-bearing error, but no exception renderer should be trusted
-        with token material: an illegal header value surfaces as its bytes
-        repr (h11 formats it b'...'), so each value is masked in the plain,
-        str-repr, and bytes-repr forms an error might use — longest first so
-        a shorter form cannot leave a fragment behind.
+        Defense in depth for the drop-path warning, in two layers. First,
+        the known value-bearing message shape — h11's "Illegal header
+        name/value b'...'" — is masked by pattern, unconditionally: on the
+        file-configured path the header values live inside the MCP adapter
+        (headers is None here), so a malformed operator-configured token
+        would otherwise be echoed verbatim, and exact masking below cannot
+        reach it. Second, when the headers ARE known (the sly_data path),
+        each value is masked wherever it appears: sanitized_headers already
+        blocks the values that make the HTTP stack raise a value-bearing
+        error, but no exception renderer should be trusted with token
+        material, so each value is masked in the plain, str-repr, and
+        bytes-repr forms an error might use — longest first so a shorter
+        form cannot leave a fragment behind.
 
         :param text: The rendered error summary bound for the log.
         :param headers: The header dict handed to this fetch, or None (the
                 file-configured path, whose values live in the adapter and
                 are operator-controlled, not client-supplied).
-        :return: text with every non-empty header value we sent masked.
+        :return: text with the value-bearing message shape and every
+                non-empty header value we sent masked.
         """
+        text = _VALUE_BEARING_MESSAGE_RE.sub(r"\1***", text)
         if not headers:
             return text
         for value in headers.values():

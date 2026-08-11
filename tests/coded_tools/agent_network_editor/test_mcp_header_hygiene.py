@@ -160,6 +160,24 @@ class TestRedactValues(TestCase):
         self.assertNotIn("FAKE-SECRET-xyz", redacted)
         self.assertIn("***", redacted)
 
+    def test_h11_messages_are_masked_even_without_header_values(self):
+        """File-configured headers live inside the MCP adapter (headers is
+        None on that path), so their values cannot be exact-masked — the one
+        known value-bearing message shape is masked by pattern instead,
+        while the rest of the message survives for diagnosis."""
+        text = "ValueError: Illegal header value b'Bearer FILE-SECRET\\n'; KeyError: 'k'"
+        redacted = McpHeaderHygiene.redact_values(text, None)
+        self.assertNotIn("FILE-SECRET", redacted)
+        self.assertIn("Illegal header value ***", redacted)
+        self.assertIn("KeyError: 'k'", redacted)
+
+    def test_an_illegal_name_message_is_masked_too(self):
+        """h11 renders an offending header NAME the same way, and junk in
+        the name slot could be a misplaced secret."""
+        redacted = McpHeaderHygiene.redact_values("Illegal header name b'NAME-SECRET\\rx'", None)
+        self.assertNotIn("NAME-SECRET", redacted)
+        self.assertIn("***", redacted)
+
     def test_a_value_that_cannot_utf8_encode_still_redacts_without_raising(self):
         """A client-controlled value can hold a lone surrogate, which
         str.encode() rejects. Redaction runs inside the fetch's except
