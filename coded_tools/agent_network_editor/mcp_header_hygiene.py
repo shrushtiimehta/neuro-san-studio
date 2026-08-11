@@ -18,6 +18,7 @@ import logging
 import re
 import sys
 from typing import Any
+from urllib.parse import urlsplit
 
 from coded_tools.agent_network_editor.and_logger import AndLogger
 
@@ -70,6 +71,53 @@ class McpHeaderHygiene:
     (AgentNetworkPersistenceMiddleware) all read it, so a generated network
     never requires a header the fetch would not actually send.
     """
+
+    @staticmethod
+    def usable_server_url(url: Any) -> bool:
+        """
+        Whether a sly_data["http_headers"] key is a well-formed http(s) MCP
+        server URL, safe to fetch from, log, and declare.
+
+        An accepted URL becomes an outbound request target and appears
+        verbatim in log lines and in persisted sly_data_schema artifacts,
+        so shape problems are rejected here, at the single classification
+        gate every consumer shares: a non-string; a scheme other than
+        http(s); any control character, whitespace, or DEL anywhere in the
+        URL (a raw newline would forge log lines); userinfo (user:pass@ —
+        credentials do not belong in a URL that gets logged and persisted;
+        auth travels in the headers); and a missing host. Non-ASCII is NOT
+        rejected: international URLs are supported end to end and carry no
+        log-forgery risk.
+
+        Deliberately NOT a destination policy: no private/loopback/
+        link-local address blocking. Localhost and private-network MCP
+        servers are first-class deployments here (development runs them
+        alongside the studio), the generated networks connect to whatever
+        server URLs they are configured with at runtime anyway, and WHICH
+        servers a conversation may use is the injecting client's trust
+        decision (nsflow injects only its vetted connected-server
+        records). Resolver-level controls (DNS pinning, redirect policy)
+        need to live in the shared MCP client layer, not per coded tool.
+
+        :param url: One key from sly_data["http_headers"].
+        :return: True when the URL is well-formed enough to use.
+        """
+        if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+            return False
+        for char in url:
+            if ord(char) <= 0x20 or ord(char) == 0x7F:
+                return False
+        try:
+            parsed = urlsplit(url)
+            if parsed.username is not None or parsed.password is not None:
+                return False
+            if not parsed.hostname:
+                return False
+        except ValueError:
+            # urlsplit (or its lazy component properties) rejects some
+            # malformed inputs, e.g. an unclosed IPv6 bracket.
+            return False
+        return True
 
     @staticmethod
     def usable_header_name(name: Any) -> str | None:

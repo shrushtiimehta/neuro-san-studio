@@ -227,6 +227,19 @@ class TestSlyDataHttpHeaderUrls(TestCase):
         }
         self.assertEqual(GetMcpTool.sly_data_http_header_urls(sly_data), ["https://ok.example/mcp"])
 
+    def test_malformed_urls_are_skipped(self):
+        """An accepted URL becomes a fetch target and a verbatim log line,
+        so a control-character (log-forging) or userinfo-bearing key never
+        classifies (shape rules pinned in test_mcp_header_hygiene.py)."""
+        sly_data = {
+            "http_headers": {
+                "https://ok.example/mcp\nFORGED": {"Authorization": "Bearer x"},
+                "https://user:pass@ok.example/mcp": {"Authorization": "Bearer y"},
+                "https://ok.example/mcp": {"Authorization": "Bearer z"},
+            }
+        }
+        self.assertEqual(GetMcpTool.sly_data_http_header_urls(sly_data), ["https://ok.example/mcp"])
+
     def test_urls_without_a_usable_header_are_skipped(self):
         """An empty dict, a blank value, a non-string value, or an illegal
         header name supplies no credential the fetch could send."""

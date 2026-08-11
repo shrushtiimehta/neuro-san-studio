@@ -37,6 +37,54 @@ from coded_tools.agent_network_editor.mcp_header_hygiene import McpHeaderHygiene
 CLIENT_URL: str = "https://oauth.example/mcp"
 
 
+class TestUsableServerUrl(TestCase):
+    """The classification gate for conversation-supplied MCP server URLs."""
+
+    def test_well_formed_urls_are_accepted(self):
+        """Plain, ported, IPv6-literal, localhost, and non-ASCII URLs all
+        pass — including localhost/private hosts, deliberately: local and
+        private-network MCP servers are first-class deployments, and WHICH
+        servers a conversation may use is the injecting client's trust
+        decision, not a shape check's."""
+        for url in (
+            "https://mcp.example.com/mcp",
+            "http://localhost:8000/mcp",
+            "https://[::1]:8443/mcp",
+            "https://example.com/mçp",
+        ):
+            self.assertTrue(McpHeaderHygiene.usable_server_url(url), url)
+
+    def test_non_strings_and_other_schemes_are_rejected(self):
+        """Only http(s) strings can be MCP server references."""
+        for url in (None, 42, b"https://x/mcp", "ftp://host/mcp", "/internal_admin_network", "file:///etc/passwd"):
+            self.assertFalse(McpHeaderHygiene.usable_server_url(url), repr(url))
+
+    def test_control_characters_and_whitespace_are_rejected(self):
+        """An accepted URL is written verbatim to log lines; a raw newline
+        (or any control char, space, or DEL) would let a client forge log
+        entries."""
+        for url in (
+            "https://example.com/mcp\nFORGED LOG LINE",
+            "https://example.com/m cp",
+            "https://example.com/\tmcp",
+            "https://example.com/mcp\x7f",
+        ):
+            self.assertFalse(McpHeaderHygiene.usable_server_url(url), repr(url))
+
+    def test_userinfo_and_hostless_urls_are_rejected(self):
+        """Credentials do not belong in a URL that gets logged and
+        persisted (auth travels in the headers), and a URL with no host —
+        including an unparseable IPv6 bracket — is not a server."""
+        for url in (
+            "https://user:pass@example.com/mcp",
+            "https://token@example.com/mcp",
+            "http://",
+            "http:///mcp",
+            "https://[::1",
+        ):
+            self.assertFalse(McpHeaderHygiene.usable_server_url(url), repr(url))
+
+
 class TestUsableHeaderNames(TestCase):
     """The single owner of which client-supplied header names count."""
 

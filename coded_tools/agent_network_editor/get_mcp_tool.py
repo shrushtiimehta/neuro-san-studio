@@ -481,15 +481,17 @@ class GetMcpTool(CodedTool):
         connected server when chatting with the Agent Network Designer; the
         designer's allow.to_downstream forwards the key to this network).
 
-        Only http(s) URLs that carry at least one usable header (a legal
-        header name with a non-blank string value — see
-        McpHeaderHygiene.usable_header_names) are returned; everything else
-        is skipped rather than raising, since chat clients control this
-        input. That covers a missing/non-dict http_headers, a non-string or
-        non-http(s) key (which must never reach URL validation as an
-        accepted reference), a non-dict header value, and a header-less or
-        blank-valued entry (which supplies no credential to fetch with,
-        declare, or gate on).
+        Only well-formed http(s) URLs (see McpHeaderHygiene.usable_server_url)
+        that carry at least one usable header (a legal header name with a
+        non-blank string value — see McpHeaderHygiene.usable_header_names)
+        are returned; everything else is skipped rather than raising, since
+        chat clients control this input. That covers a missing/non-dict
+        http_headers; a key that is not a string, not http(s), or not a
+        well-formed URL — control characters that would forge log lines,
+        userinfo, a missing host — which must never become a fetch target,
+        a log line, or an accepted URL-validation reference; a non-dict
+        header value; and a header-less or blank-valued entry (which
+        supplies no credential to fetch with, declare, or gate on).
 
         :param sly_data: The conversation's sly_data (may be None).
         :return: URLs in first-appearance order. Values are URLs only — no
@@ -500,7 +502,7 @@ class GetMcpTool(CodedTool):
             return []
         urls: list[str] = []
         for url, headers in http_headers.items():
-            if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+            if not McpHeaderHygiene.usable_server_url(url):
                 continue
             if not isinstance(headers, dict) or not McpHeaderHygiene.usable_header_names(headers):
                 continue
