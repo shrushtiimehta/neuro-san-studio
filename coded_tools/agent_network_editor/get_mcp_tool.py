@@ -17,12 +17,9 @@
 import asyncio
 import logging
 import os
-import re
-import sys
 from math import isfinite
 from pathlib import Path
 from typing import Any
-from typing import NamedTuple
 
 from langchain_core.tools import BaseTool
 from neuro_san.interfaces.coded_tool import CodedTool
@@ -30,6 +27,8 @@ from neuro_san.internals.run_context.langchain.mcp.langchain_mcp_adapter import 
 from neuro_san.internals.run_context.langchain.mcp.mcp_servers_info_restorer import McpServersInfoRestorer
 
 from coded_tools.agent_network_editor.and_logger import AndLogger
+from coded_tools.agent_network_editor.mcp_header_hygiene import McpHeaderHygiene
+from coded_tools.agent_network_editor.mcp_servers_load import McpServersLoad
 from coded_tools.agent_network_editor.shared_process_cache import SharedProcessCache
 from neuro_san_studio import mcp as _mcp_pkg
 
@@ -55,37 +54,7 @@ DEFAULT_MCP_TOOLS_FETCH_TIMEOUT_SECONDS: float = 30.0
 # re-fetched (see _mcp_tools_ttl_seconds for the env-var override).
 DEFAULT_MCP_TOOLS_TTL_SECONDS: float = 300.0
 
-# ExceptionGroup is a builtin from Python 3.11 (the repo minimum is 3.10).
-# On 3.10 the conditional's true branch never evaluates, and isinstance
-# against the empty tuple is simply always False — those interpreters keep
-# the plain str(error) rendering.
-_EXCEPTION_GROUP_TYPES: tuple[type[BaseException], ...] = (BaseExceptionGroup,) if sys.version_info >= (3, 11) else ()
-
-# Legal HTTP field-name charset (RFC 9110 "token"), for validating
-# conversation-supplied header NAMES. The HTTP stack validates outgoing
-# names just like values and raises on the first illegal one — failing the
-# whole request, not just the one header — so names outside this set are
-# dropped before the fetch (see _usable_header_name). Matched with
-# fullmatch(); the + quantifier also rejects an empty (blank) name.
-_HEADER_NAME_RE: re.Pattern[str] = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
-
 logger = AndLogger(logging.getLogger(__name__))
-
-
-class _McpServersLoad(NamedTuple):
-    """
-    Result of loading mcp_info.hocon: the file-configured server URLs plus
-    whether the file was read successfully.
-
-    loaded_ok separates an authoritatively empty result (a missing or empty
-    file — there really are no file-configured servers) from a degraded one
-    (the file exists but could not be read or parsed — the set is UNKNOWN).
-    Only the former makes it safe to treat a connected server as
-    client-token; see get_mcp_servers_or_none.
-    """
-
-    urls: list[str]
-    loaded_ok: bool
 
 
 class GetMcpTool(CodedTool):
@@ -163,12 +132,12 @@ class GetMcpTool(CodedTool):
         return (mcp_info_file, SharedProcessCache.stat_modification_time_ns(mcp_info_file))
 
     @staticmethod
-    def _load_mcp_servers() -> "_McpServersLoad":
+    def _load_mcp_servers() -> McpServersLoad:
         """
         Loader for the shared MCP-servers list (runs inside
         SharedProcessCache, off the event loop when reached via aget()).
 
-        :return: A _McpServersLoad. A missing, unreadable, or unparseable
+        :return: A McpServersLoad. A missing, unreadable, or unparseable
                 file returns an empty URL list, which IS published: the
                 fingerprint self-heals it — a missing file flips the
                 modification_time component when it appears, and fixing a
@@ -205,10 +174,10 @@ class GetMcpTool(CodedTool):
             # simply "no file-configured MCP servers right now". But flag the
             # load as FAILED (not an authoritative empty) so a caller that
             # persists a network can tell "no file servers" from "the set is
-            # unknown" and avoid baking a wrong schema (get_mcp_servers_or_none).
+            # unknown" and avoid baking a wrong schema (get_mcp_servers_load).
             logger.warning("Failed to read MCP servers info file %s: %s", mcp_info_file, error)
             loaded_ok = False
-        return _McpServersLoad(servers, loaded_ok)
+        return McpServersLoad(servers, loaded_ok)
 
     # Process-wide cache of the MCP server URLs parsed from mcp_info.hocon.
     # Previously cached per sly_data scope, so a server handling N concurrent
@@ -220,7 +189,7 @@ class GetMcpTool(CodedTool):
     # Locking, publish ordering, and the async once-gate live in
     # SharedProcessCache; access goes through the class by name (not cls) so
     # a hypothetical subclass shares the one cache instead of splitting it.
-    _shared_mcp_servers_cache: SharedProcessCache[_McpServersLoad] = SharedProcessCache(
+    _shared_mcp_servers_cache: SharedProcessCache[McpServersLoad] = SharedProcessCache(
         loader=_load_mcp_servers, fingerprint=_mcp_info_fingerprint
     )
 
@@ -303,67 +272,6 @@ class GetMcpTool(CodedTool):
         return (mcp_info_file, modification_time_ns, ttl, SharedProcessCache.time_bucket(ttl))
 
     @staticmethod
-    def _error_summary(error: BaseException) -> str:
-        """
-        Render an exception for the drop-path warning below.
-
-        The MCP streamable-http client surfaces failures as an anyio
-        ExceptionGroup whose str() is just "unhandled errors in a TaskGroup
-        (1 sub-exception)" — hiding the actual cause (e.g. a 401 from a
-        stale or revoked token), which is the one hint an operator needs to
-        pick the right remedy (re-auth in the client vs. a server outage).
-        Unwrap the group and append the leaf exceptions. Leaf messages from
-        this stack usually carry only the URL and status line, but a header
-        VALIDATION failure (e.g. h11's LocalProtocolError) can embed the raw
-        header value, so the caller validates the values it sends up front
-        (see _sanitized_headers) and redacts them from this string before
-        logging (see _redact_values) — this renderer itself makes no such
-        guarantee.
-
-        :param error: The exception caught by the fetch.
-        :return: str(error), plus "[Type: message; ...]" for group leaves.
-        """
-        if not isinstance(error, _EXCEPTION_GROUP_TYPES):
-            return str(error)
-        leaves: list[str] = []
-        stack: list[BaseException] = list(error.exceptions)
-        while stack:
-            sub: BaseException = stack.pop(0)
-            if isinstance(sub, _EXCEPTION_GROUP_TYPES):
-                stack.extend(sub.exceptions)
-            else:
-                leaves.append(f"{type(sub).__name__}: {sub}")
-        return f"{error} [{'; '.join(leaves)}]"
-
-    @staticmethod
-    def _redact_values(text: str, headers: dict[str, str] | None) -> str:
-        """
-        Mask any header value we sent out of a log-bound string.
-
-        Defense in depth for the drop-path warning. _sanitized_headers
-        already blocks the values that make the HTTP stack raise a
-        value-bearing error, but no exception renderer should be trusted
-        with token material: an illegal header value surfaces as its bytes
-        repr (h11 formats it b'...'), so each value is masked in the plain,
-        str-repr, and bytes-repr forms an error might use — longest first so
-        a shorter form cannot leave a fragment behind.
-
-        :param text: The rendered error summary bound for the log.
-        :param headers: The header dict handed to this fetch, or None (the
-                file-configured path, whose values live in the adapter and
-                are operator-controlled, not client-supplied).
-        :return: text with every non-empty header value we sent masked.
-        """
-        if not headers:
-            return text
-        for value in headers.values():
-            if not isinstance(value, str) or not value:
-                continue
-            for form in (repr(value.encode()), repr(value), value):
-                text = text.replace(form, "***")
-        return text
-
-    @staticmethod
     async def _fetch_tool_descriptions(
         server: str, fetch_timeout: float | None, headers: dict[str, str] | None = None
     ) -> tuple[str, str | None]:
@@ -407,10 +315,10 @@ class GetMcpTool(CodedTool):
             # cap above, connection errors, ...) must not take out every
             # conversation's listing of the healthy servers. This warning is
             # the only trace of a dropped server, so surface group leaves
-            # (see _error_summary).
+            # (see McpHeaderHygiene.error_summary).
             # Redact the values we sent (sly_data path): a header
             # validation error echoes the raw value, which may be a token.
-            summary: str = GetMcpTool._redact_values(GetMcpTool._error_summary(error), headers)
+            summary: str = McpHeaderHygiene.redact_values(McpHeaderHygiene.error_summary(error), headers)
             logger.warning("Error: Failed to load tools from %s. %s", server, summary)
             return server, None
         return server, description
@@ -531,31 +439,32 @@ class GetMcpTool(CodedTool):
                 missing or fails to parse (see the loader for the
                 self-healing semantics). The returned list is a copy, so
                 callers may mutate it without corrupting the shared cache.
-                Callers that PERSIST a network want get_mcp_servers_or_none
+                Callers that PERSIST a network want get_mcp_servers_load
                 instead, so a broken file (unknown set) is not mistaken for
                 "no file servers".
         """
-        return (await GetMcpTool.get_mcp_servers_or_none()) or []
+        return (await GetMcpTool.get_mcp_servers_load()).urls
 
     @staticmethod
-    async def get_mcp_servers_or_none() -> list[str] | None:
+    async def get_mcp_servers_load() -> McpServersLoad:
         """
-        Like get_mcp_servers, but returns None when mcp_info.hocon exists yet
-        could not be read or parsed — as opposed to [] for a genuinely
-        missing or empty file.
+        Like get_mcp_servers, but also reports whether mcp_info.hocon was
+        actually read: loaded_ok is False when the file exists yet could
+        not be read or parsed, as opposed to urls == [] with loaded_ok True
+        for a genuinely missing or empty file.
 
         The file-vs-client classification ("a sly_data server not in the
         file list is client-token") is only sound when the file list is
         complete. When the file failed to load, the set is unknown, so a
-        caller that persists a network uses None here to decline emitting a
-        client-token sly_data_schema rather than bake a wrong one from an
+        caller that persists a network checks loaded_ok to decline emitting
+        a client-token sly_data_schema rather than bake a wrong one from an
         incomplete list (see AgentNetworkPersistenceMiddleware).
 
-        :return: A fresh copy of the MCP server URLs on a successful load
-                (possibly empty), or None when the file could not be read.
+        :return: The load result. urls is a fresh copy, so callers may
+                mutate it without corrupting the shared cache.
         """
-        load: _McpServersLoad = await GetMcpTool._shared_mcp_servers_cache.aget()
-        return list(load.urls) if load.loaded_ok else None
+        load: McpServersLoad = await GetMcpTool._shared_mcp_servers_cache.aget()
+        return McpServersLoad(list(load.urls), load.loaded_ok)
 
     @staticmethod
     def sly_data_http_header_urls(sly_data: dict[str, Any] | None) -> list[str]:
@@ -568,13 +477,14 @@ class GetMcpTool(CodedTool):
         designer's allow.to_downstream forwards the key to this network).
 
         Only http(s) URLs that carry at least one usable header (a legal
-        header name with a non-blank string value — see usable_header_names)
-        are returned; everything else is skipped rather than raising, since
-        chat clients control this input. That covers a missing/non-dict
-        http_headers, a non-string or non-http(s) key (which must never
-        reach URL validation as an accepted reference), a non-dict header
-        value, and a header-less or blank-valued entry (which supplies no
-        credential to fetch with, declare, or gate on).
+        header name with a non-blank string value — see
+        McpHeaderHygiene.usable_header_names) are returned; everything else
+        is skipped rather than raising, since chat clients control this
+        input. That covers a missing/non-dict http_headers, a non-string or
+        non-http(s) key (which must never reach URL validation as an
+        accepted reference), a non-dict header value, and a header-less or
+        blank-valued entry (which supplies no credential to fetch with,
+        declare, or gate on).
 
         :param sly_data: The conversation's sly_data (may be None).
         :return: URLs in first-appearance order. Values are URLs only — no
@@ -589,109 +499,8 @@ class GetMcpTool(CodedTool):
             if isinstance(url, str)
             and url.startswith(("http://", "https://"))
             and isinstance(headers, dict)
-            and GetMcpTool.usable_header_names(headers)
+            and McpHeaderHygiene.usable_header_names(headers)
         ]
-
-    @staticmethod
-    def usable_header_names(headers: dict[Any, Any]) -> list[str]:
-        """
-        Get the header names in a per-URL header dict that supply a usable
-        credential: a legal HTTP header name (see _usable_header_name)
-        whose value is a string that is not blank after stripping.
-
-        Single owner of what counts as a usable client-supplied header.
-        Three call sites keep the story consistent: URL classification
-        (sly_data_http_header_urls treats a server as client-token only
-        when this is non-empty), the fetch path (_sanitized_headers sends
-        exactly these names, values cleaned), and the persisted contract
-        (AgentNetworkPersistenceMiddleware declares these names in the
-        generated sly_data_schema) — so a network never requires a header
-        that would not actually be sent.
-
-        :param headers: A per-URL header dict from sly_data["http_headers"].
-        :return: The stripped names in first-appearance order, deduped (two
-                raw spellings of one name collapse into the first). Names
-                only — no header value leaves this function.
-        """
-        names: dict[str, None] = {}
-        for name, value in headers.items():
-            usable_name: str | None = GetMcpTool._usable_header_name(name)
-            if usable_name is not None and isinstance(value, str) and value.strip():
-                names[usable_name] = None
-        return list(names)
-
-    @staticmethod
-    def _usable_header_name(name: Any) -> str | None:
-        """
-        Validate and normalize one conversation-supplied header name.
-
-        Outer whitespace is stripped (recoverable, the same treatment
-        values get). What remains must be a legal HTTP field name (RFC
-        9110 token — see _HEADER_NAME_RE): the HTTP stack validates names
-        on send exactly like values, so a blank name or one holding a
-        colon, space, control, or non-ASCII character would fail the whole
-        request rather than just this header.
-
-        :param name: One key from a per-URL header dict.
-        :return: The stripped name, or None when the name is not a string
-                or not a legal field name.
-        """
-        if not isinstance(name, str):
-            return None
-        stripped: str = name.strip()
-        if not _HEADER_NAME_RE.fullmatch(stripped):
-            return None
-        return stripped
-
-    @staticmethod
-    def _sanitized_headers(server: str, headers: dict[str, Any]) -> dict[str, str]:
-        """
-        Clean a conversation's per-URL header dict before it reaches the
-        HTTP stack.
-
-        The HTTP client validates outgoing names AND values and raises on
-        the first illegal one — failing the whole listing for this server,
-        and, for values, embedding the raw value (most often a token read
-        with a trailing newline) in the exception, which would put token
-        material on the drop path. So both halves are cleaned here.
-
-        Names: outer whitespace is stripped; what remains must be a legal
-        field name (see _usable_header_name) or the header is dropped with
-        a warning that does NOT echo the name — an arbitrary junk name
-        could hold anything, including a misplaced secret. Values: outer
-        whitespace is stripped (the common, recoverable case, so a
-        newline-tailed token still authenticates); a blank value supplies
-        no credential and is skipped silently, matching
-        usable_header_names; a value still holding a control character is
-        genuinely malformed and dropped, logging the (already validated)
-        header name only. Non-string names/values are skipped. A value is
-        never logged.
-
-        :param server: The MCP server URL, for the drop warning.
-        :param headers: The conversation's per-URL header dict (from
-                sly_data["http_headers"][server]).
-        :return: The cleaned headers to hand to the adapter; may be empty,
-                in which case the fetch runs unauthenticated and a private
-                server simply drops out of the listing (attempt-and-drop).
-        """
-        cleaned: dict[str, str] = {}
-        for name, value in headers.items():
-            if not isinstance(name, str) or not isinstance(value, str):
-                continue
-            usable_name: str | None = GetMcpTool._usable_header_name(name)
-            if usable_name is None:
-                logger.warning("Dropping malformed MCP header for %s (illegal name characters).", server)
-                continue
-            stripped: str = value.strip()
-            if not stripped:
-                continue
-            if any((ord(char) < 0x20 and char != "\t") or ord(char) == 0x7F for char in stripped):
-                logger.warning(
-                    "Dropping malformed MCP header %r for %s (illegal value characters).", usable_name, server
-                )
-                continue
-            cleaned[usable_name] = stripped
-        return cleaned
 
     @staticmethod
     async def _fetch_sly_data_tool_descriptions(sly_data: dict[str, Any], exclude: set[str]) -> dict[str, str]:
@@ -722,13 +531,14 @@ class GetMcpTool(CodedTool):
         http_headers: dict[str, Any] = sly_data["http_headers"]
         fetch_timeout: float | None = GetMcpTool._mcp_tools_fetch_timeout_seconds()
         # return_exceptions=False is safe here because
-        # _fetch_tool_descriptions swallows its own errors. Values are
-        # sanitized per URL first (see _sanitized_headers) so a malformed
-        # header can neither raise a value-bearing error nor reach a log.
+        # _fetch_tool_descriptions swallows its own errors. Headers are
+        # sanitized per URL first (see McpHeaderHygiene.sanitized_headers)
+        # so a malformed header can neither raise a value-bearing error nor
+        # reach a log.
         results = await asyncio.gather(
             *[
                 GetMcpTool._fetch_tool_descriptions(
-                    url, fetch_timeout, GetMcpTool._sanitized_headers(url, http_headers[url])
+                    url, fetch_timeout, McpHeaderHygiene.sanitized_headers(url, http_headers[url])
                 )
                 for url in urls
             ]

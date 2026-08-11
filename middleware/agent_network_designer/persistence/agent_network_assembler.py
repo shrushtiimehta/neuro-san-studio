@@ -93,10 +93,10 @@ class AgentNetworkAssembler:
                 to the header names the conversation supplied for it, or None.
                 The keys are the URLs whose auth is client-supplied. Names are
                 declared verbatim: the producing side supplies stripped, legal,
-                deduped names (GetMcpTool.usable_header_names is the single
-                owner of that policy), which keeps the schema, the fetch, and
-                URL classification telling one story — re-normalizing here
-                would just fork the policy.
+                deduped names (McpHeaderHygiene.usable_header_names is the
+                single owner of that policy), which keeps the schema, the
+                fetch, and URL classification telling one story —
+                re-normalizing here would just fork the policy.
         :return: The sly_data_schema dict, or None when the network uses no
                 client-token MCP servers (no schema should be emitted at all).
         """

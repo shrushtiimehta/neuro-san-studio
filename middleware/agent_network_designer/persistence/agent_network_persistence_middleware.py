@@ -33,6 +33,8 @@ from coded_tools.agent_network_editor.constants import AGENT_NETWORK_HOCON_TEXT
 from coded_tools.agent_network_editor.constants import AGENT_NETWORK_NAME
 from coded_tools.agent_network_editor.get_mcp_tool import GetMcpTool
 from coded_tools.agent_network_editor.get_subnetwork import GetSubnetwork
+from coded_tools.agent_network_editor.mcp_header_hygiene import McpHeaderHygiene
+from coded_tools.agent_network_editor.mcp_servers_load import McpServersLoad
 from coded_tools.agent_network_query_generator.set_sample_queries import AGENT_NETWORK_QUERIES
 from middleware.agent_network_designer.agent_network_definition_middleware import SKIP_DESIGNER
 from middleware.agent_network_designer.persistence.agent_network_assembler import AgentNetworkAssembler
@@ -242,6 +244,49 @@ class AgentNetworkPersistenceMiddleware(AgentMiddleware):
         )
         return structure_errors, instructions_errors
 
+    def _client_token_mcp_headers(self, load: McpServersLoad) -> dict[str, list[str]]:
+        """
+        Map each client-token MCP server to the header names to declare for
+        it in the persisted network's sly_data_schema.
+
+        Client-token servers are the ones this conversation supplied auth
+        headers for via sly_data (nsflow injects one per connected server
+        when chatting with the designer) that are not file-configured. Each
+        maps to the usable header names supplied for it (names only, never
+        values), so the schema declares the actual headers a server needs
+        rather than assuming "Authorization". McpHeaderHygiene.usable_header_names
+        owns which names count — stripped, legal field names with non-blank
+        values, exactly what the fetch would send — so the persisted schema
+        never requires a header that would not actually authenticate.
+        sly_data_http_header_urls only yields URLs whose
+        sly_data["http_headers"][url] is a dict with at least one such
+        name, so the index below is safe and no entry comes out empty.
+
+        When mcp_info.hocon exists but could not be read (loaded_ok False),
+        the file-server set is UNKNOWN, so genuinely client-token servers
+        cannot be told apart from file-configured-but-unreadable ones. Emit
+        no client-token schema in that case rather than bake a wrong
+        required-list into the persisted (durable) network; a re-persist
+        once the config is fixed produces the correct schema.
+
+        :param load: The mcp_info.hocon load result.
+        :return: {server URL: header names}, empty when the file load
+                failed or the conversation supplied no client-token server.
+        """
+        if not load.loaded_ok:
+            self.logger.warning(
+                "MCP servers info file could not be read; omitting client-token sly_data_schema "
+                "from the persisted network until the file is valid again."
+            )
+            return {}
+        client_token_mcp_headers: dict[str, list[str]] = {}
+        for url in GetMcpTool.sly_data_http_header_urls(self.sly_data):
+            if url not in load.urls:
+                client_token_mcp_headers[url] = McpHeaderHygiene.usable_header_names(
+                    self.sly_data["http_headers"][url]
+                )
+        return client_token_mcp_headers
+
     async def _assemble_and_persist(
         self,
         network_def: dict[str, Any],
@@ -263,40 +308,9 @@ class AgentNetworkPersistenceMiddleware(AgentMiddleware):
         self.logger.info("Agent Network Name: %s", agent_network_name)
 
         subnetwork_names: list[str] = await GetSubnetwork.get_subnetwork_names()
-        # None when mcp_info.hocon exists but could not be read/parsed: the
-        # file-server set is then UNKNOWN, so we cannot tell which sly_data
-        # servers are genuinely client-token vs file-configured-but-unreadable.
-        # Emit no client-token schema in that case rather than bake a wrong
-        # required-list into the persisted (durable) network; a re-persist
-        # once the config is fixed produces the correct schema.
-        file_servers: list[str] | None = await GetMcpTool.get_mcp_servers_or_none()
-        if file_servers is None:
-            self.logger.warning(
-                "MCP servers info file could not be read; omitting client-token sly_data_schema "
-                "from the persisted network until the file is valid again."
-            )
-            file_servers = []
-            client_token_mcp_headers: dict[str, list[str]] = {}
-        else:
-            # Client-token servers: the ones this conversation supplied auth
-            # headers for via sly_data (nsflow injects one per connected server
-            # when chatting with the designer) that are not file-configured.
-            # Map each to the usable header names supplied for it (names only,
-            # never values), so the schema declares the actual headers a server
-            # needs rather than assuming "Authorization". usable_header_names
-            # owns which names count — stripped, legal field names with
-            # non-blank values, exactly what the fetch would send — so the
-            # persisted schema never requires a header that would not
-            # actually authenticate. sly_data_http_header_urls only yields
-            # URLs whose sly_data["http_headers"][url] is a dict with at
-            # least one such name, so the index below is safe and no entry
-            # comes out empty.
-            client_token_mcp_headers = {
-                url: GetMcpTool.usable_header_names(self.sly_data["http_headers"][url])
-                for url in GetMcpTool.sly_data_http_header_urls(self.sly_data)
-                if url not in file_servers
-            }
-        mcp_servers: list[str] = file_servers + list(client_token_mcp_headers)
+        load: McpServersLoad = await GetMcpTool.get_mcp_servers_load()
+        client_token_mcp_headers: dict[str, list[str]] = self._client_token_mcp_headers(load)
+        mcp_servers: list[str] = load.urls + list(client_token_mcp_headers)
         persistor: AgentNetworkPersistor = AgentNetworkPersistorFactory.create_persistor(
             {"reservationist": self.reservationist},
             WRITE_TO_FILE,

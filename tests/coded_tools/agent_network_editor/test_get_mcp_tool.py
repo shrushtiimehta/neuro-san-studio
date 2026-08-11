@@ -42,8 +42,8 @@ from coded_tools.agent_network_editor.get_mcp_tool import BUNDLED_MCP_INFO_FILE 
 from coded_tools.agent_network_editor.get_mcp_tool import DEFAULT_MCP_TOOLS_FETCH_TIMEOUT_SECONDS  # noqa: E402
 from coded_tools.agent_network_editor.get_mcp_tool import DEFAULT_MCP_TOOLS_TTL_SECONDS  # noqa: E402
 from coded_tools.agent_network_editor.get_mcp_tool import GetMcpTool  # noqa: E402
-from coded_tools.agent_network_editor.get_mcp_tool import _McpServersLoad  # noqa: E402
 from coded_tools.agent_network_editor.globals import ProcessGlobals  # noqa: E402
+from coded_tools.agent_network_editor.mcp_servers_load import McpServersLoad  # noqa: E402
 
 MCP_SERVERS: list[str] = ["https://one.example/mcp", "https://two.example/mcp"]
 
@@ -157,13 +157,14 @@ class TestGetMcpServers(TestCase):
             ):
                 self.assertEqual(asyncio.run(GetMcpTool.get_mcp_servers()), [])
 
-    def test_or_none_returns_none_only_when_the_file_load_failed(self):
-        """A broken file is 'unknown' (None); missing/empty/good files are not."""
+    def test_load_reports_a_failure_only_when_the_file_load_failed(self):
+        """A broken file is 'unknown' (loaded_ok False); missing, empty, and
+        good files all load ok."""
         # A missing file is an authoritative empty, not a failure.
         with mock.patch.dict(os.environ, {"MCP_SERVERS_INFO_FILE": "/nonexistent/mcp_info.hocon"}):
-            self.assertEqual(asyncio.run(GetMcpTool.get_mcp_servers_or_none()), [])
+            self.assertEqual(asyncio.run(GetMcpTool.get_mcp_servers_load()), McpServersLoad([], True))
 
-        # A file that exists but cannot be read/parsed is unknown → None.
+        # A file that exists but cannot be read/parsed is unknown.
         for error in (OSError("permission denied"), ValueError("bad hocon")):
             GetMcpTool.clear_shared_mcp_servers_for_testing()
             restorer = mock.Mock()
@@ -171,14 +172,16 @@ class TestGetMcpServers(TestCase):
             with mock.patch(
                 "coded_tools.agent_network_editor.get_mcp_tool.McpServersInfoRestorer", return_value=restorer
             ):
-                self.assertIsNone(asyncio.run(GetMcpTool.get_mcp_servers_or_none()))
+                self.assertEqual(asyncio.run(GetMcpTool.get_mcp_servers_load()), McpServersLoad([], False))
 
-        # A file that loads returns its URLs (never None), even if empty.
+        # A file that loads reports its URLs with loaded_ok True.
         GetMcpTool.clear_shared_mcp_servers_for_testing()
         restorer = mock.Mock()
         restorer.restore.return_value = {"https://one.example/mcp": {}}
         with mock.patch("coded_tools.agent_network_editor.get_mcp_tool.McpServersInfoRestorer", return_value=restorer):
-            self.assertEqual(asyncio.run(GetMcpTool.get_mcp_servers_or_none()), ["https://one.example/mcp"])
+            self.assertEqual(
+                asyncio.run(GetMcpTool.get_mcp_servers_load()), McpServersLoad(["https://one.example/mcp"], True)
+            )
 
 
 class TestSlyDataHttpHeaderUrls(TestCase):
@@ -267,7 +270,7 @@ class TestGetMcpToolDescriptions(TestCase):
     def _patched_servers(self, servers: list[str] | None = None):
         """Pin the servers half so these tests never read the real config file."""
         pinned = MCP_SERVERS if servers is None else servers
-        loaded = _McpServersLoad(list(pinned), True)
+        loaded = McpServersLoad(list(pinned), True)
         return mock.patch.object(GetMcpTool._shared_mcp_servers_cache, "get", new=mock.Mock(return_value=loaded))
 
     def test_concurrent_callers_share_one_fetch_and_warm_reads_are_free(self):
@@ -524,7 +527,8 @@ class TestFetchToolDescriptions(TestCase):
 
     def test_exception_group_leaves_surface_in_the_failure_log(self):
         """The drop-path warning must show the buried cause (e.g. a 401),
-        not just anyio's opaque 'unhandled errors in a TaskGroup' text."""
+        not anyio's opaque 'unhandled errors in a TaskGroup' text (the leaf
+        rendering itself is pinned in test_mcp_header_hygiene.py)."""
         if sys.version_info < (3, 11):
             self.skipTest("ExceptionGroup is a 3.11+ builtin")
 
@@ -532,9 +536,6 @@ class TestFetchToolDescriptions(TestCase):
             "unhandled errors in a TaskGroup",
             [ExceptionGroup("inner", [ValueError("401 Unauthorized for url 'https://auth.example'")]), KeyError("k")],
         )
-        summary = GetMcpTool._error_summary(nested)
-        self.assertIn("401 Unauthorized", summary)
-        self.assertIn("KeyError", summary)
 
         async def raises_the_group(_server: str, headers: dict | None = None) -> list:
             raise nested
@@ -542,8 +543,10 @@ class TestFetchToolDescriptions(TestCase):
         with self._patched_adapter(raises_the_group), self.assertLogs(level="WARNING") as captured:
             _server, description = asyncio.run(GetMcpTool._fetch_tool_descriptions("https://auth.example", 5.0))
 
+        logged = "\n".join(captured.output)
         self.assertIsNone(description)
-        self.assertIn("401 Unauthorized", "\n".join(captured.output))
+        self.assertIn("401 Unauthorized", logged)
+        self.assertNotIn("TaskGroup", logged)
 
     def test_a_leaked_header_value_is_redacted_from_the_failure_log(self):
         """A value-bearing error (mimicking h11) must not put the token in the log."""
@@ -562,107 +565,3 @@ class TestFetchToolDescriptions(TestCase):
         self.assertIsNone(description)
         self.assertNotIn("FAKE-SECRET-xyz", logged)
         self.assertIn("***", logged)
-
-
-class TestSanitizedHeaders(TestCase):
-    """Boundary cleaning of the per-conversation header dict before it is sent."""
-
-    def test_outer_whitespace_is_stripped(self):
-        """A newline-tailed token is trimmed so it still authenticates."""
-        cleaned = GetMcpTool._sanitized_headers(CLIENT_URL, {"Authorization": "  Bearer tok\n"})
-        self.assertEqual(cleaned, {"Authorization": "Bearer tok"})
-
-    def test_a_clean_value_passes_through_unchanged(self):
-        """A well-formed value is returned as-is."""
-        cleaned = GetMcpTool._sanitized_headers(CLIENT_URL, {"Authorization": "Bearer tok", "X-Api-Key": "k"})
-        self.assertEqual(cleaned, {"Authorization": "Bearer tok", "X-Api-Key": "k"})
-
-    def test_a_mid_value_tab_is_allowed(self):
-        """Tab is a legal header-value character; only other controls are illegal."""
-        cleaned = GetMcpTool._sanitized_headers(CLIENT_URL, {"X-Api-Key": "a\tb"})
-        self.assertEqual(cleaned, {"X-Api-Key": "a\tb"})
-
-    def test_an_embedded_control_char_drops_the_header_and_logs_name_only(self):
-        """A value with an embedded control char is dropped; the value never logs."""
-        with self.assertLogs(level="WARNING") as captured:
-            cleaned = GetMcpTool._sanitized_headers(CLIENT_URL, {"Authorization": "Bearer\nSECRET"})
-
-        self.assertEqual(cleaned, {})
-        logged = "\n".join(captured.output)
-        self.assertIn("Authorization", logged)
-        self.assertNotIn("SECRET", logged)
-
-    def test_non_string_names_and_values_are_skipped(self):
-        """Malformed shapes are dropped rather than raising."""
-        cleaned = GetMcpTool._sanitized_headers(CLIENT_URL, {"Authorization": 123, 42: "x", "X-Api-Key": "k"})
-        self.assertEqual(cleaned, {"X-Api-Key": "k"})
-
-    def test_a_name_with_outer_whitespace_is_stripped(self):
-        """Names get the same recoverable-trim treatment as values."""
-        cleaned = GetMcpTool._sanitized_headers(CLIENT_URL, {" Authorization ": "Bearer tok"})
-        self.assertEqual(cleaned, {"Authorization": "Bearer tok"})
-
-    def test_an_illegal_name_drops_the_header_without_echoing_it(self):
-        """A name that is still illegal after the outer-whitespace trim (an
-        EMBEDDED control char, space, or colon) would fail the whole request
-        at send time, so it is dropped up front — and never echoed, since
-        junk in the name slot could be a misplaced secret. Well-formed
-        headers still go through."""
-        with self.assertLogs(level="WARNING") as captured:
-            cleaned = GetMcpTool._sanitized_headers(CLIENT_URL, {"X-NAME\rSECRET": "v", "  ": "w", "X-Api-Key": "k"})
-
-        self.assertEqual(cleaned, {"X-Api-Key": "k"})
-        logged = "\n".join(captured.output)
-        self.assertNotIn("SECRET", logged)
-        self.assertIn(CLIENT_URL, logged)
-
-    def test_a_blank_value_is_skipped_silently(self):
-        """A blank value supplies no credential: not sent, and not worth a
-        warning — mirroring how usable_header_names classifies it."""
-        with self.assertNoLogs(level="WARNING"):
-            cleaned = GetMcpTool._sanitized_headers(CLIENT_URL, {"Authorization": "  \n", "X-Api-Key": "k"})
-        self.assertEqual(cleaned, {"X-Api-Key": "k"})
-
-
-class TestUsableHeaderNames(TestCase):
-    """The single owner of which client-supplied header names count."""
-
-    def test_names_are_stripped_and_deduped_in_first_appearance_order(self):
-        """Two raw spellings of one name collapse; order is preserved."""
-        headers = {" Authorization ": "Bearer a", "Authorization": "Bearer b", "X-Api-Key": "k"}
-        self.assertEqual(GetMcpTool.usable_header_names(headers), ["Authorization", "X-Api-Key"])
-
-    def test_illegal_names_and_credential_less_values_are_excluded(self):
-        """Only a legal field name with a non-blank string value counts."""
-        headers = {
-            "Auth orization": "Bearer x",
-            "X-Blank": "   ",
-            "X-Non-Str": 123,
-            42: "v",
-            "X-Good": "v",
-        }
-        self.assertEqual(GetMcpTool.usable_header_names(headers), ["X-Good"])
-
-    def test_an_empty_dict_reads_as_no_names(self):
-        """No headers, no contract."""
-        self.assertEqual(GetMcpTool.usable_header_names({}), [])
-
-
-class TestRedactValues(TestCase):
-    """The drop-path log backstop that masks any header value we sent."""
-
-    def test_masks_plain_str_repr_and_bytes_repr_forms(self):
-        """A value must not survive in any form an exception renderer might use."""
-        value = "Bearer FAKE-SECRET-xyz\n"
-        text = f"raw={value} str={value!r} bytes={value.encode()!r}"
-        redacted = GetMcpTool._redact_values(text, {"Authorization": value})
-        self.assertNotIn("FAKE-SECRET-xyz", redacted)
-        self.assertIn("***", redacted)
-
-    def test_none_headers_pass_through(self):
-        """The file-configured path (headers=None) leaves the text untouched."""
-        self.assertEqual(GetMcpTool._redact_values("401 Unauthorized", None), "401 Unauthorized")
-
-    def test_empty_values_are_ignored(self):
-        """An empty header value must not blank-mask unrelated text."""
-        self.assertEqual(GetMcpTool._redact_values("some text", {"X": ""}), "some text")
