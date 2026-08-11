@@ -56,7 +56,16 @@ class TestUsableServerUrl(TestCase):
 
     def test_non_strings_and_other_schemes_are_rejected(self):
         """Only http(s) strings can be MCP server references."""
-        for url in (None, 42, b"https://x/mcp", "ftp://host/mcp", "/internal_admin_network", "file:///etc/passwd"):
+        for url in (
+            None,
+            42,
+            # bytes, not str — the host is example.com so the CI link
+            # checker (lychee, which scans string literals) skips it.
+            b"https://example.com/mcp",
+            "ftp://host/mcp",
+            "/internal_admin_network",
+            "file:///etc/passwd",
+        ):
             self.assertFalse(McpHeaderHygiene.usable_server_url(url), repr(url))
 
     def test_control_characters_and_whitespace_are_rejected(self):
