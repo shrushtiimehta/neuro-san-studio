@@ -335,12 +335,17 @@ class GetMcpTool(CodedTool):
                 descriptions; servers that failed are absent.
         """
         fetch_timeout: float | None = GetMcpTool._mcp_tools_fetch_timeout_seconds()
+        fetches: list[Any] = []
+        for server in servers:
+            fetches.append(GetMcpTool._fetch_tool_descriptions(server, fetch_timeout))
         # return_exceptions=False is safe here because
         # _fetch_tool_descriptions swallows its own errors.
-        results = await asyncio.gather(
-            *[GetMcpTool._fetch_tool_descriptions(server, fetch_timeout) for server in servers]
-        )
-        return {server: description for server, description in results if description is not None}
+        results = await asyncio.gather(*fetches)
+        descriptions: dict[str, str] = {}
+        for server, description in results:
+            if description is not None:
+                descriptions[server] = description
+        return descriptions
 
     @staticmethod
     def _load_mcp_tool_descriptions() -> dict[str, str]:
@@ -493,14 +498,14 @@ class GetMcpTool(CodedTool):
         http_headers: Any = sly_data.get("http_headers") if isinstance(sly_data, dict) else None
         if not isinstance(http_headers, dict):
             return []
-        return [
-            url
-            for url, headers in http_headers.items()
-            if isinstance(url, str)
-            and url.startswith(("http://", "https://"))
-            and isinstance(headers, dict)
-            and McpHeaderHygiene.usable_header_names(headers)
-        ]
+        urls: list[str] = []
+        for url, headers in http_headers.items():
+            if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+                continue
+            if not isinstance(headers, dict) or not McpHeaderHygiene.usable_header_names(headers):
+                continue
+            urls.append(url)
+        return urls
 
     @staticmethod
     async def _fetch_sly_data_tool_descriptions(sly_data: dict[str, Any], exclude: set[str]) -> dict[str, str]:
@@ -525,25 +530,32 @@ class GetMcpTool(CodedTool):
                 descriptions; servers that failed are absent
                 (attempt-and-drop, same as the shared path).
         """
-        urls: list[str] = [url for url in GetMcpTool.sly_data_http_header_urls(sly_data) if url not in exclude]
+        urls: list[str] = []
+        for url in GetMcpTool.sly_data_http_header_urls(sly_data):
+            if url not in exclude:
+                urls.append(url)
         if not urls:
             return {}
         http_headers: dict[str, Any] = sly_data["http_headers"]
         fetch_timeout: float | None = GetMcpTool._mcp_tools_fetch_timeout_seconds()
-        # return_exceptions=False is safe here because
-        # _fetch_tool_descriptions swallows its own errors. Headers are
-        # sanitized per URL first (see McpHeaderHygiene.sanitized_headers)
-        # so a malformed header can neither raise a value-bearing error nor
-        # reach a log.
-        results = await asyncio.gather(
-            *[
+        # Headers are sanitized per URL first (see
+        # McpHeaderHygiene.sanitized_headers) so a malformed header can
+        # neither raise a value-bearing error nor reach a log.
+        fetches: list[Any] = []
+        for url in urls:
+            fetches.append(
                 GetMcpTool._fetch_tool_descriptions(
                     url, fetch_timeout, McpHeaderHygiene.sanitized_headers(url, http_headers[url])
                 )
-                for url in urls
-            ]
-        )
-        return {server: description for server, description in results if description is not None}
+            )
+        # return_exceptions=False is safe here because
+        # _fetch_tool_descriptions swallows its own errors.
+        results = await asyncio.gather(*fetches)
+        descriptions: dict[str, str] = {}
+        for server, description in results:
+            if description is not None:
+                descriptions[server] = description
+        return descriptions
 
     @staticmethod
     async def get_mcp_tool_descriptions() -> dict[str, str]:

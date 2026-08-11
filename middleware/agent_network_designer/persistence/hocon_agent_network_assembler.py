@@ -256,7 +256,12 @@ class HoconAgentNetworkAssembler(AgentNetworkAssembler):
             return ""
         indent: str = " " * 16
         lines: list[str] = json.dumps(schema, indent=4, ensure_ascii=False).splitlines()
-        body: str = "\n".join([lines[0]] + [indent + line for line in lines[1:]])
+        # Re-indent every line but the first ("{"), which lands right after
+        # the key on the same line and needs no leading spaces of its own.
+        body_lines: list[str] = [lines[0]]
+        for line in lines[1:]:
+            body_lines.append(indent + line)
+        body: str = "\n".join(body_lines)
         return f',\n{indent}"sly_data_schema": {body}'
 
     def _render_agent_block(

@@ -145,13 +145,28 @@ class McpHeaderHygiene:
             stripped: str = value.strip()
             if not stripped:
                 continue
-            if any((ord(char) < 0x20 and char != "\t") or ord(char) == 0x7F for char in stripped):
+            if McpHeaderHygiene._has_illegal_value_character(stripped):
                 logger.warning(
                     "Dropping malformed MCP header %r for %s (illegal value characters).", usable_name, server
                 )
                 continue
             cleaned[usable_name] = stripped
         return cleaned
+
+    @staticmethod
+    def _has_illegal_value_character(value: str) -> bool:
+        """
+        Whether a header value holds a character the HTTP stack rejects:
+        any control character except horizontal tab, which is the one
+        control character legal inside an HTTP field value.
+
+        :param value: A header value, already stripped of outer whitespace.
+        :return: True if any character would fail send-time validation.
+        """
+        for char in value:
+            if (ord(char) < 0x20 and char != "\t") or ord(char) == 0x7F:
+                return True
+        return False
 
     @staticmethod
     def error_summary(error: BaseException) -> str:
