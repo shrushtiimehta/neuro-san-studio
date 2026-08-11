@@ -112,10 +112,11 @@ class TestImportNetwork:
         assert "agent_network_designer.hocon" in result.manifest_entries
         assert "advanced_calculator.hocon" in result.manifest_entries
         assert "agentforce_adapter.hocon" in result.manifest_entries
-        # Shared includes ride along on disk (line 86) but must NOT be registered as networks.
-        assert "aaosa.hocon" not in result.manifest_entries
-        assert "aaosa_basic.hocon" not in result.manifest_entries
-        assert "aaosa_basic_debug.hocon" not in result.manifest_entries
+        # Shared includes ride along on disk but must NOT be registered as networks: they are
+        # substitution fragments, and neuro-san's validator crashes on a manifest entry whose
+        # file holds a bare string instead of agent specs.
+        for shared in AgentNetworkImporter.SHARED_INCLUDES:
+            assert shared not in result.manifest_entries
 
     def test_import_skips_existing_files(self, tmp_path: Path) -> None:
         """Pre-existing target files must not be overwritten and should be reported as skipped."""
