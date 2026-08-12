@@ -104,6 +104,11 @@
     # - Use MCP_SERVERS_INFO_FILE for authentication. See ../../neuro_san_studio/mcp/mcp_info.hocon and ../../docs/user_guide.md#authentication
     "tools/google_maps.hocon": false,
 
+    # Searches the web via the you.com MCP server's free tier (no API key or OAuth), then
+    # reads the result pages with the web_fetch toolbox tool. Works out of the box.
+    # See docs/examples/tools/internet_info_gatherer.md.
+    "tools/internet_info_gatherer.hocon": true,
+
     # Before turning on and running the following agent network, make sure that:
     # The MCP server is running.
     # The server can be found at servers/MCP/bmi_server.py and run using the following command
