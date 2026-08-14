@@ -74,7 +74,7 @@ class WriteFile(CodedTool):
     plain open() would); overwriting an existing file preserves that file's mode.
     """
 
-    async def async_invoke(self, args: dict[str, Any], sly_data: dict[str, Any]) -> dict[str, Any]:
+    async def async_invoke(self, args: dict[str, Any], sly_data: dict[str, Any] | None) -> dict[str, Any]:
         """
         :param args: An argument dictionary whose keys are the parameters
                 to the coded tool and whose values are the values passed for them
@@ -167,7 +167,7 @@ class WriteFile(CodedTool):
         logger.info("WriteFile: wrote %d bytes to %s (created=%s)", len(content), file_path, created)
         return created
 
-    async def _async_cache_write(self, sly_data: dict[str, Any], file_path: Path) -> None:
+    async def _async_cache_write(self, sly_data: dict[str, Any] | None, file_path: Path) -> None:
         """Append the resolved file path to the session-scoped write history in sly_data.
 
         Mirrors read_file's read_file_history: only the resolved path is recorded
@@ -335,9 +335,10 @@ class WriteFile(CodedTool):
         uses os.link(), the atomic create-if-absent primitive: if the target came
         into existence after the precheck, the link fails with FileExistsError and
         the caller's file never overwrites it. On filesystems without hard-link
-        support the link raises a different OSError; fall back to a final existence
-        check + os.replace, which restores the (small) precheck race only where the
-        atomic primitive is unavailable.
+        support the link raises a different OSError; that fails closed as
+        write_error rather than falling back to a non-atomic existence check +
+        os.replace, which would silently reintroduce the clobber race the flag
+        exists to prevent.
         """
         if overwrite:
             os.replace(tmp_path, file_path)
@@ -346,13 +347,15 @@ class WriteFile(CodedTool):
             os.link(tmp_path, file_path)
         except FileExistsError as exc:
             raise ValueError(f"file_already_exists: '{file_path}' already exists and 'overwrite' is False.") from exc
-        except OSError:
-            if file_path.exists():
-                raise ValueError(
-                    f"file_already_exists: '{file_path}' already exists and 'overwrite' is False."
-                ) from None
-            os.replace(tmp_path, file_path)
-            return
+        except PermissionError:
+            # Not a hard-link-support problem; let the caller map it to its own
+            # permission-denied write_error message.
+            raise
+        except OSError as exc:
+            raise ValueError(
+                f"write_error: Cannot guarantee no-clobber creation of '{file_path}' on this filesystem "
+                f"(hard links unavailable: {exc}). Retry with 'overwrite' set to True if replacing is acceptable."
+            ) from exc
         # The target is installed; a failure to remove the now-redundant temp link
         # must not be reported as a failed write.
         try:

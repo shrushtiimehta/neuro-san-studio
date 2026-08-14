@@ -56,7 +56,7 @@ class ReadFile(CodedTool):
         read_error       – the file could not be read (permission error, I/O failure, etc.).
     """
 
-    async def async_invoke(self, args: dict[str, Any], sly_data: dict[str, Any]) -> dict[str, Any]:
+    async def async_invoke(self, args: dict[str, Any], sly_data: dict[str, Any] | None) -> dict[str, Any]:
         """
         :param args: An argument dictionary whose keys are the parameters
                 to the coded tool and whose values are the values passed for them
@@ -165,7 +165,7 @@ class ReadFile(CodedTool):
         )
         return content, actual_start, actual_end, total_lines
 
-    async def _async_cache_read(self, sly_data: dict[str, Any], file_path: Path) -> None:
+    async def _async_cache_read(self, sly_data: dict[str, Any] | None, file_path: Path) -> None:
         """Append the resolved file path to the session-scoped read history in sly_data.
 
         Only the resolved path is recorded (deduped, insertion-ordered). Contents are

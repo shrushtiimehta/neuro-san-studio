@@ -232,12 +232,17 @@ class PathAccess:
 
         Each entry is run through expanduser() and resolve(strict=False) for symmetry
         with resolve_path, so allow/block entries like '~/project' work as expected.
+
+        An entry that cannot be resolved fails closed with invalid_input rather than
+        being skipped: these lists are operator-controlled security config, and
+        silently ignoring a mis-typed blocked_paths entry would fail open (a path the
+        operator intended to block would be allowed).
         """
         for entry in path_list:
             try:
                 candidate: Path = Path(entry).expanduser().resolve(strict=False)
-            except (RuntimeError, ValueError, OSError):
-                continue
+            except (RuntimeError, ValueError, OSError) as exc:
+                raise ValueError(f"invalid_input: Cannot resolve allow/block list entry {entry!r}: {exc}") from exc
             if file_path == candidate:
                 return True
             try:
