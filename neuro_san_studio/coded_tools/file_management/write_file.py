@@ -210,7 +210,12 @@ class WriteFile(CodedTool):
         value: Any = args.get("content")
         if not isinstance(value, str):
             raise ValueError(f"invalid_input: 'content' must be a string, got {value!r}.")
-        encoded: bytes = value.encode("utf-8")
+        try:
+            encoded: bytes = value.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            # A str can hold unpaired surrogates (e.g. from mis-decoded JSON) that
+            # are not encodable as UTF-8; keep the documented error taxonomy.
+            raise ValueError(f"invalid_input: 'content' is not encodable as UTF-8: {exc}") from exc
         if len(encoded) > MAX_WRITE_BYTES:
             raise ValueError(
                 f"content_too_large: content is {len(encoded)} bytes; exceeds the {MAX_WRITE_BYTES}-byte limit."

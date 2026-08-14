@@ -396,7 +396,12 @@ class TestPathAccess(TestCase):  # pylint: disable=too-many-public-methods
     # ------------------------------------------------------ validate_path_list
 
     def test_validate_path_list_none_returns_empty_list(self):
-        """Tests that passing None returns an empty list (deny all)."""
+        """Tests that passing None returns an empty list.
+
+        What an empty list means is up to the caller: allowed_paths requires a
+        non-empty list (validate_allowed_paths), while an empty blocked_paths
+        simply blocks nothing.
+        """
         self.assertEqual(self._call_validate_path_list(None), [])
 
     def test_validate_path_list_single_string_coerced_to_list(self):
@@ -409,7 +414,7 @@ class TestPathAccess(TestCase):  # pylint: disable=too-many-public-methods
         self.assertEqual(self._call_validate_path_list(paths), paths)
 
     def test_validate_path_list_empty_list_returned_as_empty(self):
-        """Tests that an empty list is returned unchanged (also means deny all)."""
+        """Tests that an empty list is returned unchanged (caller-defined semantics; see above)."""
         self.assertEqual(self._call_validate_path_list([]), [])
 
     def test_validate_path_list_non_list_non_string_raises(self):

@@ -299,6 +299,12 @@ class TestWriteFile(TestCase):  # pylint: disable=too-many-public-methods
                 self._call_validate_content({"content": bad})
             self.assertIn("invalid_input", str(ctx.exception))
 
+    def test_validate_content_unencodable_content_raises_invalid_input(self):
+        """Tests that content that is not UTF-8 encodable (unpaired surrogate) keeps the error taxonomy."""
+        with self.assertRaises(ValueError) as ctx:
+            self._call_validate_content({"content": "bad \ud800 surrogate"})
+        self.assertIn("invalid_input", str(ctx.exception))
+
     def test_validate_content_content_at_limit_passes(self):
         """Tests that content exactly at the byte limit is allowed (boundary).
 
