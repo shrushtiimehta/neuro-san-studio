@@ -16,18 +16,15 @@
 
 from unittest import TestCase
 
-from neuro_san_studio.coded_tools.file_management.read_file import ReadFile
+from neuro_san_studio.coded_tools.file_management.path_access import PathAccess
 
 
 class TestNormalizeExtensions(TestCase):
-    """Unit tests for ReadFile._normalize_extensions."""
-
-    def setUp(self):
-        self.tool = ReadFile()
+    """Unit tests for PathAccess.normalize_extensions."""
 
     def _call(self, extensions):
-        """Invoke _normalize_extensions and return the result list."""
-        return self.tool._normalize_extensions(extensions)  # pylint: disable=protected-access
+        """Invoke normalize_extensions and return the result list."""
+        return PathAccess.normalize_extensions(extensions)
 
     def test_already_normalized(self):
         """Tests that lowercase dot-prefixed extensions are returned unchanged."""

@@ -18,14 +18,13 @@ import tempfile
 from pathlib import Path
 from unittest import TestCase
 
-from neuro_san_studio.coded_tools.file_management.read_file import ReadFile
+from neuro_san_studio.coded_tools.file_management.path_access import PathAccess
 
 
 class TestResolvePath(TestCase):
-    """Unit tests for ReadFile._resolve_path."""
+    """Unit tests for PathAccess.resolve_path."""
 
     def setUp(self):
-        self.tool = ReadFile()
         self.tmpdir = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
         self.tmp_root = Path(self.tmpdir.name)
 
@@ -33,8 +32,8 @@ class TestResolvePath(TestCase):
         self.tmpdir.cleanup()
 
     def _call(self, args):
-        """Invoke _resolve_path with the given args dict and return the result."""
-        return self.tool._resolve_path(args)  # pylint: disable=protected-access
+        """Invoke resolve_path with the given args dict and return the result."""
+        return PathAccess.resolve_path(args)
 
     def test_resolves_existing_file(self):
         """Tests that an existing file path is resolved to an absolute Path."""

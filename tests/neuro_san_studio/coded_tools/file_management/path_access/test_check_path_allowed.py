@@ -18,14 +18,13 @@ import tempfile
 from pathlib import Path
 from unittest import TestCase
 
-from neuro_san_studio.coded_tools.file_management.read_file import ReadFile
+from neuro_san_studio.coded_tools.file_management.path_access import PathAccess
 
 
 class TestCheckPathAllowed(TestCase):
-    """Unit tests for ReadFile._check_path_allowed access-control logic."""
+    """Unit tests for PathAccess.check_path_allowed access-control logic."""
 
     def setUp(self):
-        self.tool = ReadFile()
         self.tmpdir = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
         self.tmp_root = Path(self.tmpdir.name).resolve()
         self.file = self.tmp_root / "doc.txt"
@@ -36,8 +35,8 @@ class TestCheckPathAllowed(TestCase):
 
     # pylint: disable=too-many-arguments,too-many-positional-arguments
     def _check(self, allowed_paths, allowed_exts=None, blocked_paths=None, blocked_exts=None, path=None):
-        """Invoke _check_path_allowed with sensible defaults; returns None or raises."""
-        return self.tool._check_path_allowed(  # pylint: disable=protected-access
+        """Invoke check_path_allowed with sensible defaults; returns None or raises."""
+        return PathAccess.check_path_allowed(
             path or self.file,
             allowed_paths,
             allowed_exts,

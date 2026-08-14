@@ -16,18 +16,15 @@
 
 from unittest import TestCase
 
-from neuro_san_studio.coded_tools.file_management.read_file import ReadFile
+from neuro_san_studio.coded_tools.file_management.path_access import PathAccess
 
 
 class TestValidateExtensionList(TestCase):
-    """Unit tests for ReadFile._validate_extension_list."""
-
-    def setUp(self):
-        self.tool = ReadFile()
+    """Unit tests for PathAccess.validate_extension_list."""
 
     def _call(self, value, param_name="test_param"):
-        """Invoke _validate_extension_list with the given value and return the result."""
-        return self.tool._validate_extension_list(value, param_name)  # pylint: disable=protected-access
+        """Invoke validate_extension_list with the given value and return the result."""
+        return PathAccess.validate_extension_list(value, param_name)
 
     def test_none_returned_as_none_sentinel(self):
         """Tests that None is preserved (sentinel: omitted = skip filtering)."""

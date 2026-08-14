@@ -16,18 +16,15 @@
 
 from unittest import TestCase
 
-from neuro_san_studio.coded_tools.file_management.read_file import ReadFile
+from neuro_san_studio.coded_tools.file_management.path_access import PathAccess
 
 
 class TestValidateAllowedPaths(TestCase):
-    """Unit tests for ReadFile._validate_allowed_paths."""
-
-    def setUp(self):
-        self.tool = ReadFile()
+    """Unit tests for PathAccess.validate_allowed_paths."""
 
     def _call(self, args):
-        """Invoke _validate_allowed_paths and return the result."""
-        return self.tool._validate_allowed_paths(args)  # pylint: disable=protected-access
+        """Invoke validate_allowed_paths and return the result."""
+        return PathAccess.validate_allowed_paths(args)
 
     def test_missing_key_raises_invalid_input(self):
         """Tests that omitting allowed_paths raises invalid_input (required parameter)."""

@@ -18,14 +18,13 @@ import tempfile
 from pathlib import Path
 from unittest import TestCase
 
-from neuro_san_studio.coded_tools.file_management.read_file import ReadFile
+from neuro_san_studio.coded_tools.file_management.path_access import PathAccess
 
 
 class TestPathMatchesAny(TestCase):
-    """Unit tests for ReadFile._path_matches_any."""
+    """Unit tests for PathAccess.path_matches_any."""
 
     def setUp(self):
-        self.tool = ReadFile()
         self.tmpdir = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
         self.tmp_root = Path(self.tmpdir.name).resolve()
         (self.tmp_root / "sub").mkdir()
@@ -36,8 +35,8 @@ class TestPathMatchesAny(TestCase):
         self.tmpdir.cleanup()
 
     def _call(self, file_path, path_list):
-        """Invoke _path_matches_any and return the boolean result."""
-        return self.tool._path_matches_any(file_path, path_list)  # pylint: disable=protected-access
+        """Invoke path_matches_any and return the boolean result."""
+        return PathAccess.path_matches_any(file_path, path_list)
 
     def test_empty_list_returns_false(self):
         """Tests that an empty list matches no paths."""

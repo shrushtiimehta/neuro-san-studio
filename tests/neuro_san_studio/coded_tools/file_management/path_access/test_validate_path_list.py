@@ -16,18 +16,15 @@
 
 from unittest import TestCase
 
-from neuro_san_studio.coded_tools.file_management.read_file import ReadFile
+from neuro_san_studio.coded_tools.file_management.path_access import PathAccess
 
 
 class TestValidatePathList(TestCase):
-    """Unit tests for ReadFile._validate_path_list."""
-
-    def setUp(self):
-        self.tool = ReadFile()
+    """Unit tests for PathAccess.validate_path_list."""
 
     def _call(self, value, param_name="test_param"):
-        """Invoke _validate_path_list with the given value and return the result."""
-        return self.tool._validate_path_list(value, param_name)  # pylint: disable=protected-access
+        """Invoke validate_path_list with the given value and return the result."""
+        return PathAccess.validate_path_list(value, param_name)
 
     def test_none_returns_empty_list(self):
         """Tests that passing None returns an empty list (deny all)."""
