@@ -40,7 +40,7 @@ class PathAccess:
     IMPORTANT ordering contract for callers: run resolve_path() and
     validate_and_check_access() BEFORE any filesystem existence checks, so
     out-of-scope paths always surface path_not_allowed and never leak
-    filesystem layout via a path_not_found / path_already_exists error type.
+    filesystem layout via a path_not_found / file_already_exists error type.
     """
 
     # ------------------------------------------------------------------

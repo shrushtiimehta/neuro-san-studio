@@ -22,7 +22,6 @@ from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
-from neuro_san_studio.coded_tools.file_management.write_file import MAX_WRITE_BYTES
 from neuro_san_studio.coded_tools.file_management.write_file import WRITE_FILE_HISTORY_KEY
 from neuro_san_studio.coded_tools.file_management.write_file import WriteFile
 
@@ -301,21 +300,29 @@ class TestWriteFile(TestCase):  # pylint: disable=too-many-public-methods
             self.assertIn("invalid_input", str(ctx.exception))
 
     def test_validate_content_content_at_limit_passes(self):
-        """Tests that content exactly at the byte limit is allowed (boundary)."""
-        result = self._call_validate_content({"content": "x" * MAX_WRITE_BYTES})
-        self.assertEqual(len(result), MAX_WRITE_BYTES)
+        """Tests that content exactly at the byte limit is allowed (boundary).
+
+        The limit is patched down so the boundary is exercised without allocating
+        a 10 MB string.
+        """
+        with patch("neuro_san_studio.coded_tools.file_management.write_file.MAX_WRITE_BYTES", 64):
+            result = self._call_validate_content({"content": "x" * 64})
+        self.assertEqual(len(result), 64)
 
     def test_validate_content_content_over_limit_raises(self):
         """Tests that content one byte over the limit raises content_too_large."""
-        with self.assertRaises(ValueError) as ctx:
-            self._call_validate_content({"content": "x" * (MAX_WRITE_BYTES + 1)})
+        with patch("neuro_san_studio.coded_tools.file_management.write_file.MAX_WRITE_BYTES", 64):
+            with self.assertRaises(ValueError) as ctx:
+                self._call_validate_content({"content": "x" * 65})
         self.assertIn("content_too_large", str(ctx.exception))
 
     def test_validate_content_multibyte_content_over_limit_raises(self):
         """Tests that the limit is enforced on encoded bytes so multi-byte chars can't sneak past."""
-        # é is 2 bytes in UTF-8, so this is over the byte limit while under the char limit.
-        with self.assertRaises(ValueError) as ctx:
-            self._call_validate_content({"content": "é" * ((MAX_WRITE_BYTES // 2) + 1)})
+        # é is 2 bytes in UTF-8, so 33 of them are over the 64-byte limit while
+        # well under a 64-character count.
+        with patch("neuro_san_studio.coded_tools.file_management.write_file.MAX_WRITE_BYTES", 64):
+            with self.assertRaises(ValueError) as ctx:
+                self._call_validate_content({"content": "é" * 33})
         self.assertIn("content_too_large", str(ctx.exception))
 
     # ----------------------------------------------------- _write_atomically
