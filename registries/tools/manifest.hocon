@@ -109,7 +109,7 @@
     # account in an OAuth-capable client (e.g. nsflow), which passes the bearer tokens via
     # sly_data http_headers per the network's sly_data_schema. Chat is gated until the
     # required servers are connected. See docs/examples/tools/google_workspace.md.
-    "tools/google_workspace.hocon": true,
+    "tools/google_workspace.hocon": false,
 
     # Before turning on and running the following agent network, make sure that:
     # The MCP server is running.
