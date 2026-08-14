@@ -109,7 +109,12 @@ class WriteFile(CodedTool):
                 but whose values are meant to be kept out of the chat stream.
 
                 Keys expected for this implementation are:
-                    None
+                    None. May be None.
+
+                Side effect: on success, the resolved path is appended to the
+                "write_file_history" list in sly_data (deduped, insertion-ordered),
+                guarded by a "write_file_history_lock" entry. Best-effort
+                bookkeeping — skipped when sly_data is None.
 
         :return:
             A dictionary with the following keys:

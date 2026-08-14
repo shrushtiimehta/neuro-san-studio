@@ -94,6 +94,14 @@ class TestReadFile(TestCase):  # pylint: disable=too-many-public-methods
         self.assertIn("read_at", result)
         self.assertEqual(result["path"], str(path.resolve()))
 
+    def test_async_invoke_none_sly_data_tolerated(self):
+        """Tests that sly_data=None does not fail a successful read (history is best-effort bookkeeping)."""
+        path = self._write("a.txt", "hello\n")
+        result = asyncio.run(
+            self.tool.async_invoke({"file_path": str(path), "allowed_paths": [str(self.tmp_root)]}, None)
+        )
+        self.assertEqual(result["content"], "hello\n")
+
     def test_async_invoke_omitted_allowed_paths_raises_invalid_input(self):
         """Tests that omitting the required allowed_paths raises invalid_input."""
         path = self._write("a.txt", "x")
