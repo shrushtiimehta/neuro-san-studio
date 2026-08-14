@@ -17,6 +17,7 @@
 """Typer CLI dispatcher for the neuro-san-studio package."""
 
 import os
+import sys
 from typing import List
 from typing import Optional
 
@@ -51,6 +52,7 @@ class NeuroSanStudioCli:  # pylint: disable=too-few-public-methods
     @staticmethod
     @app.callback()
     def _main(
+        ctx: typer.Context,
         _version: bool = typer.Option(
             False,
             "--version",
@@ -61,8 +63,13 @@ class NeuroSanStudioCli:  # pylint: disable=too-few-public-methods
         ),
     ) -> None:
         """Neuro SAN Studio CLI."""
-        if os.path.isfile(".env"):
-            ProjectEnvironment(os.getcwd()).load_env_file()
+        # Click runs this callback before parsing the subcommand's own args, so `ns run --help`
+        # would load the project .env just to render a help screen. Nothing in help output depends
+        # on the environment. (`ns --help`, bare `ns` and `ns --version` already exit before here.)
+        # sys.argv is the only source of those args: Click empties ctx.args before this runs.
+        if any(arg in ctx.help_option_names for arg in sys.argv[1:]):
+            return
+        ProjectEnvironment(os.getcwd()).load_env_file()
 
     @staticmethod
     def _validate_run_flags(overrides: dict) -> None:

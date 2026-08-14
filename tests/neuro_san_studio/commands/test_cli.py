@@ -16,6 +16,7 @@
 
 """Tests for the Typer CLI dispatcher and `main()` entry point."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -262,8 +263,8 @@ class TestMainEntryPoint:
         assert not call_order
 
 
-class TestLoadsProjectEnvFile:  # pylint: disable=too-few-public-methods
-    """The top-level callback loads the project .env before any subcommand runs."""
+class TestLoadsProjectEnvFile:
+    """The top-level callback loads the project .env before a subcommand runs, but not for --help."""
 
     def test_check_llm_keys_picks_up_dotenv(
         self, tmp_path: Path, monkeypatch: MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -278,3 +279,20 @@ class TestLoadsProjectEnvFile:  # pylint: disable=too-few-public-methods
         except SystemExit as exc:
             assert exc.code == 0
         assert "sk-f...cdef" in capsys.readouterr().out
+
+    def test_subcommand_help_does_not_load_dotenv(
+        self, tmp_path: Path, monkeypatch: MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """`ns run --help` renders help without loading <cwd>/.env.
+
+        Asserts on the side effect rather than the rendered help text, which wraps/ANSI-styles
+        at the terminal width and is flaky in CI.
+        """
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".env").write_text("NS_STUDIO_HELP_PROBE=loaded\n")
+        monkeypatch.delenv("NS_STUDIO_HELP_PROBE", raising=False)
+        monkeypatch.setattr(sys, "argv", ["neuro-san-studio", "run", "--help"])
+        # --help exits 0 after printing help; main() swallows clean exits.
+        main()
+        assert "Loaded environment variables from" not in capsys.readouterr().out
+        assert os.environ.get("NS_STUDIO_HELP_PROBE") is None
