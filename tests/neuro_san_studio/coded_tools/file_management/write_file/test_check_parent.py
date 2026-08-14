@@ -55,11 +55,11 @@ class TestCheckParent(TestCase):
         self.assertIn("parent_not_found", str(ctx.exception))
 
     def test_parent_is_a_file_raises_even_with_create_parents(self):
-        """Tests that a parent path occupied by a regular file raises even when create_parents is True."""
+        """Tests that a parent path occupied by a regular file raises parent_not_a_directory regardless of flag."""
         blocker = self.tmp_root / "blocker"
         blocker.write_text("x", encoding="utf-8")
         path = blocker / "file.txt"
         for create_parents in (False, True):
             with self.assertRaises(ValueError) as ctx:
                 self._call(path, create_parents)
-            self.assertIn("parent_not_found", str(ctx.exception))
+            self.assertIn("parent_not_a_directory", str(ctx.exception))

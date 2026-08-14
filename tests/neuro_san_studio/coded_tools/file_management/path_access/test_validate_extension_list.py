@@ -54,3 +54,11 @@ class TestValidateExtensionList(TestCase):
         with self.assertRaises(ValueError) as ctx:
             self._call([".py", 1])
         self.assertIn("invalid_input", str(ctx.exception))
+
+    def test_blank_entry_raises(self):
+        """Tests that blank/whitespace entries are rejected as invalid_input (config error, fail closed)."""
+        for bad in [[""], ["   "], [".py", ""]]:
+            with self.assertRaises(ValueError) as ctx:
+                self._call(bad)
+            self.assertIn("invalid_input", str(ctx.exception))
+            self.assertIn("blank", str(ctx.exception))

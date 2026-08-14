@@ -25,8 +25,8 @@ from typing import Any
 from leaf_common.serialization.util.text_file_reader import TextFileReader
 from neuro_san.interfaces.coded_tool import CodedTool
 
-from coded_tools.agent_network_editor.sly_data_lock import SlyDataLock
 from neuro_san_studio.coded_tools.file_management.path_access import PathAccess
+from neuro_san_studio.coded_tools.file_management.sly_data_history import SlyDataHistory
 
 MAX_CHARS: int = 20_000
 MAX_FILE_BYTES: int = 10 * 1024 * 1024  # 10 MB hard cap on files read into memory
@@ -179,14 +179,8 @@ class ReadFile(CodedTool):
             cache the full file and re-slice — neither buys much over reading from disk.
           - Limited reuse: most agent file reads are one-shot; the content already lives
             in the chat context after the first read.
-
-        Lock-guarded so concurrent reads don't race on the dedupe/append.
         """
-        async with await SlyDataLock.get_lock(sly_data, "read_file_history_lock"):
-            history: list[str] = sly_data.setdefault(READ_FILE_HISTORY_KEY, [])
-            resolved_str: str = str(file_path)
-            if resolved_str not in history:
-                history.append(resolved_str)
+        await SlyDataHistory.async_record(sly_data, "read_file_history_lock", READ_FILE_HISTORY_KEY, file_path)
 
     # ------------------------------------------------------------------
     # Async wrappers for pre-read checks

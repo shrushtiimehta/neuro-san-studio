@@ -658,8 +658,11 @@ Options are `ascending` and `descending`. Default to `descending`.
     # Writes text content to a local file with allow/block-list access control.
     #
     # Content larger than 10 MB (UTF-8 encoded) is rejected with content_too_large.
-    # Writes are atomic (same-directory temp file + rename), so a failed write
-    # never leaves a truncated file behind.
+    # Writes are atomic (same-directory temp file + atomic install), so a failed
+    # write never leaves a truncated file behind, and the overwrite=False policy is
+    # enforced atomically at install time — a file that appears concurrently is
+    # never clobbered. New files get the umask-derived default mode; overwriting
+    # preserves the existing file's mode.
     #
     # ============================================================================
     # IMPORTANT — operator configuration is required for this tool to work.

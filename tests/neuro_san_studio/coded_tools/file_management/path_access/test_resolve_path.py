@@ -53,6 +53,16 @@ class TestResolvePath(TestCase):
             self._call({"file_path": ""})
         self.assertIn("invalid_input", str(ctx.exception))
 
+    def test_unknown_user_tilde_raises_invalid_input(self):
+        """Tests that '~unknownuser/...' raises invalid_input instead of leaking RuntimeError.
+
+        Path.expanduser() raises RuntimeError (not OSError) when the named user's home
+        directory cannot be determined; resolve_path must map it into the taxonomy.
+        """
+        with self.assertRaises(ValueError) as ctx:
+            self._call({"file_path": "~no_such_user_xyz_12345/notes.txt"})
+        self.assertIn("invalid_input", str(ctx.exception))
+
     def test_whitespace_only_raises(self):
         """Tests that a whitespace-only path raises invalid_input after stripping."""
         with self.assertRaises(ValueError) as ctx:

@@ -16,18 +16,19 @@
 
 import asyncio
 import os
-import tempfile
+import stat as stat_module
 from datetime import datetime
 from datetime import timezone
 from logging import Logger
 from logging import getLogger
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from neuro_san.interfaces.coded_tool import CodedTool
 
-from coded_tools.agent_network_editor.sly_data_lock import SlyDataLock
 from neuro_san_studio.coded_tools.file_management.path_access import PathAccess
+from neuro_san_studio.coded_tools.file_management.sly_data_history import SlyDataHistory
 
 MAX_WRITE_BYTES: int = 10 * 1024 * 1024  # 10 MB hard cap on content written to disk
 WRITE_FILE_HISTORY_KEY: str = "write_file_history"  # sly_data key for the list of written file paths
@@ -52,15 +53,25 @@ class WriteFile(CodedTool):
     explicitly.
 
     Error types (raised as ValueError with the specified message prefix):
-        invalid_input       – required parameter is missing, wrong type, or invalid value.
-        path_not_allowed    – the resolved path is outside every allowed_paths entry,
-                              or its extension is not in allowed_file_extensions.
-        is_a_directory      – the path points to an existing directory, not a file.
-        file_already_exists – the file exists and overwrite is False.
-        parent_not_found    – the parent directory does not exist (or is not a
-                              directory) and create_parents is False.
-        content_too_large   – the content exceeds MAX_WRITE_BYTES (10 MB) when UTF-8 encoded.
-        write_error         – the file could not be written (permission error, I/O failure, etc.).
+        invalid_input        – required parameter is missing, wrong type, or invalid value.
+        path_not_allowed     – the resolved path is outside every allowed_paths entry,
+                               its extension is not in allowed_file_extensions, or the
+                               path stopped resolving to the authorized location
+                               between the access check and the write.
+        is_a_directory       – the path points to an existing directory, not a file.
+        file_already_exists  – the file exists and overwrite is False. Enforced both
+                               up front and atomically at write time, so a file that
+                               appears concurrently is never clobbered.
+        parent_not_found     – the parent directory does not exist and
+                               create_parents is False.
+        parent_not_a_directory – the parent path exists but is not a directory
+                               (raised regardless of create_parents, since the
+                               parent could never be created there).
+        content_too_large    – the content exceeds MAX_WRITE_BYTES (10 MB) when UTF-8 encoded.
+        write_error          – the file could not be written (permission error, I/O failure, etc.).
+
+    Permissions: a newly created file gets the umask-derived default mode (as a
+    plain open() would); overwriting an existing file preserves that file's mode.
     """
 
     async def async_invoke(self, args: dict[str, Any], sly_data: dict[str, Any]) -> dict[str, Any]:
@@ -109,11 +120,11 @@ class WriteFile(CodedTool):
                 "written_at"    (str): ISO-8601 UTC timestamp when the file was written.
 
         :raises ValueError: invalid_input, path_not_allowed, is_a_directory,
-                            file_already_exists, parent_not_found, content_too_large,
-                            write_error.
+                            file_already_exists, parent_not_found,
+                            parent_not_a_directory, content_too_large, write_error.
         """
-        file_path, content, create_parents = await self._async_precheck(args)
-        created: bool = await self._async_write_file(file_path, content, create_parents)
+        file_path, content, overwrite, create_parents = await self._async_precheck(args)
+        created: bool = await self._async_write_file(file_path, content, overwrite, create_parents)
         await self._async_cache_write(sly_data, file_path)
 
         return {
@@ -127,8 +138,10 @@ class WriteFile(CodedTool):
     # Async phases — async_invoke is just orchestration over these three.
     # ------------------------------------------------------------------
 
-    async def _async_precheck(self, args: dict[str, Any]) -> tuple[Path, bytes, bool]:
-        """Run all pre-write validation and access checks. Returns (file_path, content, create_parents).
+    async def _async_precheck(self, args: dict[str, Any]) -> tuple[Path, bytes, bool, bool]:
+        """Run all pre-write validation and access checks.
+
+        Returns (file_path, content, overwrite, create_parents).
 
         Order matters: resolve → access → argument validation → target/parent state.
         Access checks run before the filesystem is touched so out-of-scope paths never
@@ -141,16 +154,16 @@ class WriteFile(CodedTool):
         create_parents: bool = PathAccess.validate_bool(args, "create_parents", False)
         await self._async_check_writable_target(file_path, overwrite)
         await self._async_check_parent(file_path, create_parents)
-        return file_path, content, create_parents
+        return file_path, content, overwrite, create_parents
 
-    async def _async_write_file(self, file_path: Path, content: bytes, create_parents: bool) -> bool:
+    async def _async_write_file(self, file_path: Path, content: bytes, overwrite: bool, create_parents: bool) -> bool:
         """Write content to file_path atomically. Returns True when the file was newly created.
 
         Raises write_error on permission / I/O failures.
         """
         logger: Logger = getLogger(self.__class__.__name__)
         logger.info("WriteFile: writing %d bytes to %s", len(content), file_path)
-        created: bool = await asyncio.to_thread(self._write_atomically, file_path, content, create_parents)
+        created: bool = await asyncio.to_thread(self._write_atomically, file_path, content, overwrite, create_parents)
         logger.info("WriteFile: wrote %d bytes to %s (created=%s)", len(content), file_path, created)
         return created
 
@@ -159,14 +172,9 @@ class WriteFile(CodedTool):
 
         Mirrors read_file's read_file_history: only the resolved path is recorded
         (deduped, insertion-ordered) so companion tools and operators can audit which
-        files a conversation has modified. Lock-guarded so concurrent writes don't
-        race on the dedupe/append.
+        files a conversation has modified.
         """
-        async with await SlyDataLock.get_lock(sly_data, "write_file_history_lock"):
-            history: list[str] = sly_data.setdefault(WRITE_FILE_HISTORY_KEY, [])
-            resolved_str: str = str(file_path)
-            if resolved_str not in history:
-                history.append(resolved_str)
+        await SlyDataHistory.async_record(sly_data, "write_file_history_lock", WRITE_FILE_HISTORY_KEY, file_path)
 
     # ------------------------------------------------------------------
     # Async wrappers for pre-write checks
@@ -219,13 +227,14 @@ class WriteFile(CodedTool):
 
         With create_parents=True missing parents are allowed — they are created
         inside _write_atomically. A parent path that exists but is not a directory
-        is always an error, since mkdir could never succeed there.
+        is always parent_not_a_directory, regardless of create_parents, since
+        mkdir could never succeed there.
         """
         parent: Path = file_path.parent
         if parent.is_dir():
             return
         if parent.exists():
-            raise ValueError(f"parent_not_found: parent of '{file_path}' exists but is not a directory.")
+            raise ValueError(f"parent_not_a_directory: parent of '{file_path}' exists but is not a directory.")
         if not create_parents:
             raise ValueError(
                 f"parent_not_found: parent directory of '{file_path}' does not exist and 'create_parents' is False."
@@ -235,14 +244,25 @@ class WriteFile(CodedTool):
     # Write helper
     # ------------------------------------------------------------------
 
-    def _write_atomically(self, file_path: Path, content: bytes, create_parents: bool) -> bool:
-        """Write content to file_path via a same-directory temp file + os.replace.
+    def _write_atomically(self, file_path: Path, content: bytes, overwrite: bool, create_parents: bool) -> bool:
+        """Write content to file_path via a same-directory temp file + atomic install.
 
         Atomicity matters here: a direct open()/write() that fails midway (disk full,
         process kill) would leave a truncated file behind, and a concurrent reader
-        could observe a half-written file. os.replace() is atomic on POSIX and
-        Windows when source and destination are on the same filesystem, which is
-        guaranteed by creating the temp file in the target's own directory.
+        could observe a half-written file. The temp file lives in the target's own
+        directory so the final install never crosses a filesystem boundary.
+
+        The install step enforces the overwrite policy atomically, not just in the
+        earlier precheck: with overwrite=False the temp file is installed via
+        os.link(), which fails with FileExistsError if the target appeared since the
+        precheck — a concurrent write is surfaced as file_already_exists instead of
+        being silently clobbered. With overwrite=True, os.replace() is used.
+
+        Permissions: the temp file is created with mode 0o666 filtered by the
+        process umask (matching a plain open()), so new files get the conventional
+        default instead of mkstemp's private 0o600. When overwriting, the target's
+        existing mode is copied onto the temp file first, so os.replace() does not
+        silently downgrade permissions other consumers rely on.
 
         Returns True when the target did not previously exist (file was created).
         Raises write_error on permission / I/O failures.
@@ -254,16 +274,45 @@ class WriteFile(CodedTool):
             except OSError as exc:
                 raise ValueError(f"write_error: Could not create parent directories for '{file_path}': {exc}") from exc
 
-        # Snapshot existence just before the write for the 'created' flag. This is
-        # best-effort under concurrency; the write itself is safe either way.
-        created: bool = not file_path.exists()
-
-        tmp_path: str | None = None
+        # The access check in the precheck ran against a fully resolved path, but the
+        # syscalls below re-traverse the path string. Re-resolve here, in the same
+        # thread hop as the write, and refuse if a directory component was swapped
+        # (e.g. for a symlink pointing outside the allowed roots) since the check.
+        # This shrinks the check-to-use window from the whole precheck-to-write span
+        # to microseconds; fully closing it needs openat2(RESOLVE_BENEATH), which is
+        # not portably available.
         try:
-            fd, tmp_path = tempfile.mkstemp(dir=str(parent), prefix=f".{file_path.name}.", suffix=".tmp")
+            actual_parent: Path = parent.resolve(strict=True)
+        except OSError as exc:
+            raise ValueError(f"write_error: Could not resolve parent of '{file_path}': {exc}") from exc
+        if actual_parent != parent:
+            raise ValueError(
+                f"path_not_allowed: parent of '{file_path}' no longer resolves to the authorized "
+                f"directory (now '{actual_parent}'); refusing to write."
+            )
+
+        # Single stat for both the 'created' flag and the mode to preserve on
+        # overwrite. Best-effort under concurrency; the install step below is what
+        # actually guarantees the no-clobber policy.
+        existing_mode: int | None = None
+        try:
+            existing_mode = stat_module.S_IMODE(file_path.stat().st_mode)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise ValueError(f"write_error: Could not stat '{file_path}': {exc}") from exc
+
+        tmp_path: Path | None = None
+        try:
+            # O_EXCL guards against temp-name collisions; mode 0o666 is filtered by
+            # the process umask at creation, unlike tempfile.mkstemp's fixed 0o600.
+            tmp_path = parent / f".{file_path.name}.{uuid4().hex}.tmp"
+            fd: int = os.open(tmp_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o666)
             with os.fdopen(fd, "wb") as handle:
                 handle.write(content)
-            os.replace(tmp_path, file_path)
+            if existing_mode is not None:
+                os.chmod(tmp_path, existing_mode)
+            self._install_temp_file(tmp_path, file_path, overwrite)
             tmp_path = None  # ownership transferred to the target path
         except PermissionError as exc:
             raise ValueError(f"write_error: Permission denied writing '{file_path}'.") from exc
@@ -277,4 +326,36 @@ class WriteFile(CodedTool):
                 except OSError:
                     pass
 
-        return created
+        return existing_mode is None
+
+    def _install_temp_file(self, tmp_path: Path, file_path: Path, overwrite: bool) -> None:
+        """Atomically install the written temp file at the target path.
+
+        overwrite=True uses os.replace(), which clobbers by design. overwrite=False
+        uses os.link(), the atomic create-if-absent primitive: if the target came
+        into existence after the precheck, the link fails with FileExistsError and
+        the caller's file never overwrites it. On filesystems without hard-link
+        support the link raises a different OSError; fall back to a final existence
+        check + os.replace, which restores the (small) precheck race only where the
+        atomic primitive is unavailable.
+        """
+        if overwrite:
+            os.replace(tmp_path, file_path)
+            return
+        try:
+            os.link(tmp_path, file_path)
+        except FileExistsError as exc:
+            raise ValueError(f"file_already_exists: '{file_path}' already exists and 'overwrite' is False.") from exc
+        except OSError:
+            if file_path.exists():
+                raise ValueError(
+                    f"file_already_exists: '{file_path}' already exists and 'overwrite' is False."
+                ) from None
+            os.replace(tmp_path, file_path)
+            return
+        # The target is installed; a failure to remove the now-redundant temp link
+        # must not be reported as a failed write.
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass

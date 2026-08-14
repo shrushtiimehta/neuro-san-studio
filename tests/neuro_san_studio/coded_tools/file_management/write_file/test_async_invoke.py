@@ -135,6 +135,34 @@ class TestAsyncInvoke(TestCase):
         self._invoke({"file_path": str(path_a), "content": "3", "overwrite": True})
         self.assertEqual(self.sly_data[WRITE_FILE_HISTORY_KEY], [str(path_a), str(path_b)])
 
+    def test_none_sly_data_tolerated(self):
+        """Tests that sly_data=None (seen from some middleware paths) does not fail a completed write."""
+        path = self.tmp_root / "out.txt"
+        result = asyncio.run(
+            self.tool.async_invoke(
+                {"file_path": str(path), "allowed_paths": [str(self.tmp_root)], "content": "x"}, None
+            )
+        )
+        self.assertTrue(result["created"])
+        self.assertEqual(path.read_text(encoding="utf-8"), "x")
+
+    def test_blank_allowed_paths_entry_rejected(self):
+        """Tests that a blank allowed_paths entry fails closed instead of granting CWD access."""
+        path = self.tmp_root / "out.txt"
+        with self.assertRaises(ValueError) as ctx:
+            self._invoke({"file_path": str(path), "content": "x", "allowed_paths": [""]})
+        self.assertIn("invalid_input", str(ctx.exception))
+        self.assertFalse(path.exists())
+
+    def test_parent_is_a_file_raises_parent_not_a_directory(self):
+        """Tests that a parent occupied by a regular file surfaces parent_not_a_directory even with create_parents."""
+        blocker = self.tmp_root / "blocker"
+        blocker.write_text("x", encoding="utf-8")
+        path = blocker / "out.txt"
+        with self.assertRaises(ValueError) as ctx:
+            self._invoke({"file_path": str(path), "content": "x", "create_parents": True})
+        self.assertIn("parent_not_a_directory", str(ctx.exception))
+
     def test_relative_path_resolved_within_allowed_root(self):
         """Tests that the reported path is the resolved absolute path."""
         path = self.tmp_root / "sub" / ".." / "rel.txt"

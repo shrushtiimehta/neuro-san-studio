@@ -60,3 +60,12 @@ class TestValidatePathList(TestCase):
         with self.assertRaises(ValueError) as ctx:
             self._call({"path": "/a"})
         self.assertIn("invalid_input", str(ctx.exception))
+
+    def test_blank_entry_raises(self):
+        """Tests that blank/whitespace entries are rejected: Path('').resolve() is the CWD, so a
+        blank allow-list entry would silently grant access to the whole working-directory tree."""
+        for bad in [[""], ["   "], ["/a", ""], ""]:
+            with self.assertRaises(ValueError) as ctx:
+                self._call(bad)
+            self.assertIn("invalid_input", str(ctx.exception))
+            self.assertIn("blank", str(ctx.exception))

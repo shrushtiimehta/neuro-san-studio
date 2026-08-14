@@ -86,8 +86,11 @@ class PathAccess:
             raise ValueError(f"invalid_input: No '{param_name}' provided.")
 
         try:
+            # expanduser() raises RuntimeError (not OSError) when the home directory
+            # of a '~user' path cannot be determined, so it must be caught explicitly
+            # to keep the invalid_input taxonomy instead of leaking a raw traceback.
             return Path(path_str).expanduser().resolve(strict=False)
-        except (ValueError, OSError) as exc:
+        except (ValueError, OSError, RuntimeError) as exc:
             raise ValueError(f"invalid_input: Cannot resolve '{param_name}' '{path_str}': {exc}") from exc
 
     @staticmethod
@@ -112,19 +115,8 @@ class PathAccess:
     @staticmethod
     def validate_path_list(value: Any, param_name: str) -> list[str]:
         """Coerce and validate a path list parameter. Accepts None, list[str], or a single str."""
-        if value is None:
-            return []
-        if isinstance(value, str):
-            return [value]
-        if not isinstance(value, list):
-            raise ValueError(f"invalid_input: '{param_name}' must be a list of strings, got {value!r}.")
-        for item in value:
-            if not isinstance(item, str):
-                raise ValueError(
-                    f"invalid_input: '{param_name}' must be a list of strings, "
-                    f"but contains non-string element {item!r}."
-                )
-        return value
+        coerced: list[str] | None = PathAccess._coerce_str_list(value, param_name)
+        return [] if coerced is None else coerced
 
     @staticmethod
     def validate_extension_list(value: Any, param_name: str) -> list[str] | None:
@@ -132,10 +124,26 @@ class PathAccess:
 
         None means the parameter was omitted (sentinel for "no filtering"); an empty list means deny all.
         """
+        return PathAccess._coerce_str_list(value, param_name)
+
+    @staticmethod
+    def _coerce_str_list(value: Any, param_name: str) -> list[str] | None:
+        """Shared coercion core for the allow/block list parameters.
+
+        Accepts None (returned as-is so callers can apply their own sentinel
+        semantics), a single str (wrapped in a list), or list[str].
+
+        Blank / whitespace-only entries are rejected as invalid_input: a blank
+        path entry would resolve to the process working directory in
+        path_matches_any (Path('').resolve() is the CWD), silently turning a
+        misconfigured allow-list entry (e.g. an unset templating variable) into
+        access to the entire working-directory tree. Failing closed here keeps
+        that misconfiguration loud.
+        """
         if value is None:
             return None
         if isinstance(value, str):
-            return [value]
+            value = [value]
         if not isinstance(value, list):
             raise ValueError(f"invalid_input: '{param_name}' must be a list of strings, got {value!r}.")
         for item in value:
@@ -144,6 +152,8 @@ class PathAccess:
                     f"invalid_input: '{param_name}' must be a list of strings, "
                     f"but contains non-string element {item!r}."
                 )
+            if not item.strip():
+                raise ValueError(f"invalid_input: '{param_name}' contains a blank entry, which is not allowed.")
         return value
 
     @staticmethod
