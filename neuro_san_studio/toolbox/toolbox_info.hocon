@@ -756,7 +756,7 @@ Options are `ascending` and `descending`. Default to `descending`.
                     "description": "Type of search: 'search' (general web), 'news', 'images', or 'places'. Default: 'search'"
                 },
                 "k": {
-                    "type": "object",
+                    "type": "integer",
                     "description": "Number of search results to retrieve. Default: 10"
                 },
                 "gl": {
