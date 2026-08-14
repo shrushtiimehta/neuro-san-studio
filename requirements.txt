@@ -1,6 +1,6 @@
 # Neuro SAN
-leaf-common>=1.2.49
-neuro-san==0.6.88
+leaf-common>=1.2.52
+neuro-san==0.6.92
 nsflow==0.6.17
 
 # For config parsing
@@ -49,3 +49,8 @@ timedinput>=0.1.1
 
 # For checkbox-based selection in CLI
 questionary>=2.0.0
+
+# ReservationsStorage
+# ... for S3
+botocore>=1.34.51
+aiobotocore>=3.7.0

@@ -14,61 +14,193 @@
 #
 # END COPYRIGHT
 
-# Use ./deploy/build.sh to build this container. After a successful build,
-# you can use ./deploy/run.sh to run the built container locally.
+# ---------------------------------------------------------------------------
+# Free-threaded (Python 3.14t / no-GIL) build of the neuro-san-studio image.
+#
+# This is a variant of ./Dockerfile that:
+#   1. Runs on a FREE-THREADED CPython 3.14t interpreter.
+#   2. Ships a C/Rust build toolchain in the builder stage, because not every
+#      third-party dependency publishes cp314t wheels yet, so some must be
+#      compiled from source for the free-threaded ABI.
+#
+# All Python dependencies -- including neuro-san and the in-house leaf-common --
+# are installed from requirements.txt (i.e. from PyPI), exactly like
+# ./Dockerfile. No sibling source repositories are needed.
+#
+# WHY NOT `FROM python:3.14t-slim`?
+#   The Docker official `python` images do NOT publish a free-threaded variant
+#   (there is no `3.14t*` tag). We therefore provision the free-threaded
+#   interpreter with `uv`, which downloads a python-build-standalone
+#   free-threaded CPython (the "3.14t" variant) and builds a venv on top of it.
+#   Swap out the "provision python" step below if your organization has its own
+#   free-threaded base image; the rest of the file is provisioning-agnostic.
+#
+# Use ./deploy/build_py314t.sh to build this container. After a successful
+# build, you can use ./deploy/run.sh to run the built container locally.
 #
 # To find server-oriented environment variables to help you configure things
 # how you want, search for "ENV AGENT_" in this file.
+# ---------------------------------------------------------------------------
 
-# Stage 1: Builder Stage - Use our python base image for installations
-# Set python image as base image
-FROM python:3.13-slim AS builder
+# Build arguments
+ARG NEURO_SAN_STUDIO_VERSION="unknown"
+
+# OS base image for both stages (a plain Debian slim; the Python interpreter is
+# provisioned separately by uv, see below).
+ARG BASE_IMAGE="debian:trixie-slim"
+
+# Image to lift the statically-linked `uv` binary from.
+ARG UV_IMAGE="ghcr.io/astral-sh/uv:latest"
+
+# The free-threaded interpreter to install. The trailing "t" selects the
+# free-threaded (no-GIL) build. uv resolves this to a python-build-standalone
+# free-threaded CPython.
+ARG PYTHON_VERSION="3.14t"
+
+# Fixed locations for the uv-managed interpreter and the application venv.
+# These MUST be identical between the builder and final stages so the venv's
+# reference to its base interpreter stays valid after the copy.
+ARG PYTHON_INSTALL_DIR="/opt/python"
+ARG VENV_DIR="/opt/venv"
+
+# ===========================================================================
+# Stage 0: uv source - a tiny stage we lift the static `uv` binary out of.
+# Referenced as a named stage (rather than COPY --from=${UV_IMAGE}) because a
+# global ARG is usable in FROM but NOT inside a COPY --from within a stage.
+# ===========================================================================
+FROM ${UV_IMAGE} AS uvsrc
+
+# ===========================================================================
+# Stage 1: Builder - provision free-threaded 3.14t and install all deps
+# ===========================================================================
+FROM ${BASE_IMAGE} AS builder
 
 # Set the shell and options per hadolint recommendations
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-# Reset to the root directory
 WORKDIR /
 
 # App-specific constants
 ENV USERNAME="neuro-san"
 ENV APP_HOME="/usr/local/${USERNAME}"
 ENV APP_SOURCE="${APP_HOME}/myapp"
-ENV PIP3_VERSION="25.0.1"
 
-# Explicitly get the desired pip version
-RUN pip3 install --upgrade pip==${PIP3_VERSION} --no-cache-dir ; mkdir -p ${APP_SOURCE}
+# Toolchain needed to build C/Rust extensions from source for the cp314t ABI
+# when no prebuilt free-threaded wheel is available on PyPI. pydantic-core (via
+# pydantic) in particular is a Rust extension, hence the Rust toolchain below.
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        gcc \
+        g++ \
+        make \
+        cmake \
+        pkg-config \
+        libffi-dev \
+        libssl-dev \
+        curl \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-# Having a requirements.txt file for your coded_tool dependencies is optional
-COPY ./requirements.txt ${APP_SOURCE}/requirements.txt
-COPY ./neuro_san_studio/plugins/langfuse/requirements.txt ${APP_SOURCE}/neuro_san_studio/plugins/langfuse/requirements.txt
+# Rust toolchain (for pydantic-core and any other maturin/rust-built deps that
+# lack a cp314t wheel). Rather than pipe https://sh.rustup.rs straight into a
+# shell -- which pulls an unpinned, unverified script over the network on every
+# build -- we download a PINNED rustup-init from the immutable versioned archive
+# and verify its SHA-256 before running it. rustup itself then cryptographically
+# verifies the toolchain it downloads. Bump RUSTUP_VERSION + the two checksums
+# together from https://static.rust-lang.org/rustup/archive/<ver>/<target>/rustup-init.sha256
+# RUST_TOOLCHAIN can be pinned to an exact version (e.g. "1.90.0") for fully
+# reproducible builds; "stable" tracks the latest stable at build time.
+ENV RUSTUP_HOME="/usr/local/rustup" \
+    CARGO_HOME="/usr/local/cargo" \
+    PATH="/usr/local/cargo/bin:${PATH}"
+ARG RUSTUP_VERSION="1.29.0"
+ARG RUST_TOOLCHAIN="stable"
+ARG RUSTUP_INIT_SHA256_AMD64="4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10"
+ARG RUSTUP_INIT_SHA256_ARM64="9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792"
+RUN dpkgArch="$(dpkg --print-architecture)" \
+    && case "${dpkgArch}" in \
+        amd64) rustArch="x86_64-unknown-linux-gnu"; sha256="${RUSTUP_INIT_SHA256_AMD64}" ;; \
+        arm64) rustArch="aarch64-unknown-linux-gnu"; sha256="${RUSTUP_INIT_SHA256_ARM64}" ;; \
+        *) echo "unsupported architecture: ${dpkgArch}" >&2; exit 1 ;; \
+    esac \
+    && url="https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${rustArch}/rustup-init" \
+    && curl --proto '=https' --tlsv1.2 -sSfL "${url}" -o /tmp/rustup-init \
+    && echo "${sha256}  /tmp/rustup-init" | sha256sum -c - \
+    && chmod +x /tmp/rustup-init \
+    && /tmp/rustup-init -y --no-modify-path --profile minimal --default-toolchain "${RUST_TOOLCHAIN}" \
+    && rm -f /tmp/rustup-init \
+    && rustc --version \
+    && cargo --version
 
-# Move the work dir to the app source to find the requirements.
-WORKDIR ${APP_SOURCE}
-RUN if [ -f ${APP_SOURCE}/requirements.txt ]; \
-    then \
-        pip install --prefix=/install --no-cache-dir -r ${APP_SOURCE}/requirements.txt ; \
-    fi
+# Bring in the uv binary (static, no runtime deps).
+COPY --from=uvsrc /uv /usr/local/bin/uv
 
-# Install the optional Langfuse dependency so this deployment can use
-# neuro-san's built-in Langfuse tracing (see the LANGFUSE_* env vars below).
-# Remove this (and the COPY above) if your deployment does not use Langfuse.
-# To install other optional or plugin dependencies, follow the same pattern.
-# hadolint ignore=DL3059
-RUN pip install --prefix=/install --no-cache-dir \
-    -r ${APP_SOURCE}/neuro_san_studio/plugins/langfuse/requirements.txt
+# ---------------------------------------------------------------------------
+# Provision the free-threaded interpreter and an application venv on top of it.
+# ---------------------------------------------------------------------------
+ARG PYTHON_VERSION
+ARG PYTHON_INSTALL_DIR
+ARG VENV_DIR
+ENV UV_PYTHON_INSTALL_DIR="${PYTHON_INSTALL_DIR}"
+ENV VIRTUAL_ENV="${VENV_DIR}"
+ENV UV_NO_CACHE=1
 
-# Reset to the root directory
-WORKDIR /
+# --seed puts pip/setuptools in the venv so the runtime entrypoint's
+# `pip3 --version`/`pip3 freeze` diagnostics keep working.
+RUN uv python install "${PYTHON_VERSION}" \
+    && uv venv --python "${PYTHON_VERSION}" --seed "${VENV_DIR}" \
+    && "${VENV_DIR}/bin/python" -c "import sys; print('python', sys.version); print('gil_enabled =', getattr(sys, '_is_gil_enabled', lambda: 'n/a')())"
 
-# Stage 2: Final Stage - Use a slim Python image
-FROM python:3.13-slim AS final
+# From here on, put the venv first on PATH so `python`/`pip` mean the venv's.
+ENV PATH="${VENV_DIR}/bin:${PATH}"
+
+# ---------------------------------------------------------------------------
+# neuro-san-studio runtime dependencies, installed straight from
+# requirements.txt (neuro-san and leaf-common come from PyPI like everything
+# else). The optional Langfuse plugin requirements are installed too so this
+# deployment can use neuro-san's built-in Langfuse tracing (see the LANGFUSE_*
+# env vars below); drop that second -r if your deployment does not use Langfuse.
+# ---------------------------------------------------------------------------
+COPY requirements.txt /build/requirements.txt
+COPY neuro_san_studio/plugins/langfuse/requirements.txt /build/langfuse-requirements.txt
+
+# orjson (pulled in transitively via langsmith / langgraph-sdk) REFUSES TO COMPILE
+# under a free-threaded interpreter unless this opt-in build env var is set: its
+# build.rs gates free-threaded builds behind `ORJSON_BUILD_FREETHREADED` and exits
+# with "does not support free-threaded Python" otherwise. We opt in here rather than
+# patching the Rust source.
+#
+# Caveat: this only lets orjson BUILD; orjson does not declare itself free-thread
+# safe, so at run time CPython will automatically re-enable the GIL when orjson is
+# imported (with a warning) unless the GIL is forced off (PYTHON_GIL=0 below).
+ENV ORJSON_BUILD_FREETHREADED=1
+
+RUN uv pip install \
+        -r /build/requirements.txt \
+        -r /build/langfuse-requirements.txt \
+    && python -c "import leaf_common, neuro_san; print('neuro-san / leaf imports OK')"
+
+# ===========================================================================
+# Stage 2: Final - slim runtime image carrying the 3.14t venv
+# ===========================================================================
+FROM ${BASE_IMAGE} AS final
 
 ARG NEURO_SAN_STUDIO_VERSION="unknown"
 ENV NEURO_SAN_STUDIO_VERSION=${NEURO_SAN_STUDIO_VERSION}
 
 # Set the shell and options in each FROM section per hadolint recommendations
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# A couple of runtime OS bits the app expects (bash for the entrypoint, certs
+# for outbound TLS to LLM providers).
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set up user for app running in container
 ENV USERNAME="neuro-san"
@@ -77,10 +209,9 @@ ENV APP_SOURCE="${APP_HOME}/myapp"
 
 RUN \
     useradd -ms /bin/bash -d ${APP_HOME} -u 1001 ${USERNAME} \
-    && echo ${USERNAME}:pw | chpasswd \
+    && usermod -L ${USERNAME} \
     && mkdir -p ${APP_HOME}/.ssh \
     && chown -R ${USERNAME}: ${APP_HOME} \
-    && chown -R ${USERNAME}: /usr/local/ \
     && chown -R ${USERNAME}: /var/log
 
 # Set up a place for the mount of secrets to happen
@@ -94,8 +225,14 @@ RUN mkdir -p ${APP_HOME}/certs/aws \
 # and ServiceAgentSession.DEFAULT_HTTP_PORT
 EXPOSE 8080
 
-# Copy installed dependencies from the builder stage
-COPY --from=builder /install /usr/local
+# Carry over the free-threaded interpreter and the fully-populated venv.
+# Both paths must match the builder stage so the venv keeps working.
+ARG PYTHON_INSTALL_DIR
+ARG VENV_DIR
+COPY --from=builder ${PYTHON_INSTALL_DIR} ${PYTHON_INSTALL_DIR}
+COPY --from=builder ${VENV_DIR} ${VENV_DIR}
+ENV VIRTUAL_ENV="${VENV_DIR}"
+ENV PATH="${VENV_DIR}/bin:${PATH}"
 
 # Copy application code and necessary files
 # Note: The registries directory where agent definitions live is mandatory
@@ -126,10 +263,32 @@ COPY ./config ${APP_SOURCE}/config
 USER ${USERNAME}
 WORKDIR ${APP_SOURCE}
 
-# RUN echo "$(pip show neuro-san | grep Location | awk '{print $2}')"
-# This value below comes from the above RUN command. Cannot set ENV vars in Dockerfiles based on shell output.
-ENV PACKAGE_INSTALL="/usr/local/lib/python3.13/site-packages"
+# Where the installed dependencies (neuro-san, leaf-common, ...) live. Unlike
+# the python:3.13 image, deps are in the uv-managed free-threaded venv, not
+# /usr/local/lib/python3.13/site-packages. Used by the entrypoint for
+# diagnostics only.
+ENV PACKAGE_INSTALL="${VENV_DIR}"
 ENV APP_ENTRYPOINT="${APP_SOURCE}/deploy/entrypoint.sh"
+
+#
+# Free-threading (no-GIL) control
+#
+# This image runs a free-threaded 3.14t interpreter. We FORCE the GIL OFF by
+# default: PYTHON_GIL=0 keeps the GIL disabled even when a C/Rust extension that
+# is not marked free-thread-safe is imported (CPython would otherwise auto
+# RE-ENABLE the GIL for such an import). So every `docker run` of this image
+# gets true free-threading unless overridden.
+#
+# WARNING: this stack loads native extensions that do NOT declare free-thread
+# safety (e.g. orjson -- see ORJSON_BUILD_FREETHREADED above -- and others).
+# Running them with the GIL forced off means CPython proceeds WITHOUT the GIL's
+# protection; concurrent use of a not-yet-safe extension can data-race or crash.
+# This is a deliberate choice for this image.
+#
+# Override at runtime if needed (docker run -e PYTHON_GIL=...):
+#   PYTHON_GIL=1  -> force the GIL ON (run 3.14t as a conventional interpreter)
+#   PYTHON_GIL=0  -> (this image's default) force the GIL OFF
+ENV PYTHON_GIL=0
 
 #
 # API Keys for LLM Access
