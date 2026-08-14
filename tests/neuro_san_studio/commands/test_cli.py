@@ -30,6 +30,17 @@ from neuro_san_studio.commands import internalize_agents as internalize_agents_m
 from neuro_san_studio.commands.cli import main
 
 
+@pytest.fixture(autouse=True)
+def _isolate_cwd(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    """Run every test in this module from an empty directory.
+
+    The CLI's top-level callback loads `<cwd>/.env`. Without this, a test invoking main() from a
+    repo checkout picks up the developer's real .env and injects those variables into os.environ
+    for the rest of the session, making results depend on an untracked file.
+    """
+    monkeypatch.chdir(tmp_path)
+
+
 class TestMainEntryPoint:
     """Tests for the `main()` console script entry point."""
 
@@ -270,7 +281,7 @@ class TestLoadsProjectEnvFile:
         self, tmp_path: Path, monkeypatch: MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """A key defined only in <cwd>/.env is visible to `check-llm-keys` via os.getenv."""
-        monkeypatch.chdir(tmp_path)
+        # tmp_path is already the cwd, via the module's _isolate_cwd fixture.
         (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-from-dotenv-1234567890abcdef\n")
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         monkeypatch.setattr(sys, "argv", ["neuro-san-studio", "check-llm-keys", "--tier", "1"])
@@ -288,7 +299,7 @@ class TestLoadsProjectEnvFile:
         Asserts on the side effect rather than the rendered help text, which wraps/ANSI-styles
         at the terminal width and is flaky in CI.
         """
-        monkeypatch.chdir(tmp_path)
+        # tmp_path is already the cwd, via the module's _isolate_cwd fixture.
         (tmp_path / ".env").write_text("NS_STUDIO_HELP_PROBE=loaded\n")
         monkeypatch.delenv("NS_STUDIO_HELP_PROBE", raising=False)
         monkeypatch.setattr(sys, "argv", ["neuro-san-studio", "run", "--help"])
