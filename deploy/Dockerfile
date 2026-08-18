@@ -410,6 +410,19 @@ ENV AGENT_SESSION_REQUIRE_HTTPS="true"
 # Strongly consider keeping this off for production deployments.
 ENV LEAF_LOG_SENSITIVE="false"
 
+# When set to "true" (default "false"), CodedTool "class" references -- including
+# shared coded tools referenced through the toolbox -- resolve ONLY from within
+# the AGENT_TOOL_PATH hierarchy (see AGENT_TOOL_PATH above).  Fully-qualified
+# references to modules elsewhere on the PYTHONPATH are not resolved -- not even
+# imported -- so an agent network hocon file cannot trigger import-time execution
+# of an arbitrary installed module through a CodedTool class reference.  See
+# https://github.com/cognizant-ai-lab/neuro-san/blob/main/docs/agent_hocon_reference.md#class
+# Left off for now ("" resolves to false): some agent networks in this repo still
+# use fully-qualified CodedTool class references, which the restriction refuses.
+# We will change this to "true" once this repo's class references are cleaned up
+# to the "<module>.<ClassName>" form relative to AGENT_TOOL_PATH.
+ENV AGENT_TOOL_PATH_ONLY=""
+
 #
 # Authorization
 #
