@@ -417,11 +417,11 @@ ENV LEAF_LOG_SENSITIVE="false"
 # imported -- so an agent network hocon file cannot trigger import-time execution
 # of an arbitrary installed module through a CodedTool class reference.  See
 # https://github.com/cognizant-ai-lab/neuro-san/blob/main/docs/agent_hocon_reference.md#class
-# Left off for now ("" resolves to false): some agent networks in this repo still
+# Left off for now: some agent networks in this repo still
 # use fully-qualified CodedTool class references, which the restriction refuses.
 # We will change this to "true" once this repo's class references are cleaned up
 # to the "<module>.<ClassName>" form relative to AGENT_TOOL_PATH.
-ENV AGENT_TOOL_PATH_ONLY=""
+ENV AGENT_TOOL_PATH_ONLY="false"
 
 #
 # Authorization
