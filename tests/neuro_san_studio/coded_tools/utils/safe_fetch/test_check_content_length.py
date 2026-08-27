@@ -16,19 +16,16 @@
 
 from unittest import TestCase
 
-from neuro_san_studio.coded_tools.web_fetch import MAX_RESPONSE_BYTES
-from neuro_san_studio.coded_tools.web_fetch import WebFetch
+from neuro_san_studio.coded_tools.utils.safe_fetch import MAX_RESPONSE_BYTES
+from neuro_san_studio.coded_tools.utils.safe_fetch import SafeFetch
 
 
 class TestCheckContentLength(TestCase):
-    """Unit tests for WebFetch._check_content_length."""
-
-    def setUp(self):
-        self.tool = WebFetch()
+    """Unit tests for SafeFetch.check_content_length."""
 
     def _call(self, header, url="http://example.com"):
         """Invoke _check_content_length with the given Content-Length header value."""
-        self.tool._check_content_length(header, url)  # pylint: disable=protected-access
+        SafeFetch.check_content_length(header, url)
 
     def test_none_header_does_not_raise(self):
         """Tests that a missing (None) Content-Length header does not raise."""

@@ -16,23 +16,20 @@
 
 from unittest import TestCase
 
-from neuro_san_studio.coded_tools.web_fetch import WebFetch
+from neuro_san_studio.coded_tools.utils.safe_fetch import SafeFetch
 
 
 class TestValidateHostnameSafety(TestCase):
-    """Unit tests for WebFetch._validate_hostname_safety.
+    """Unit tests for SafeFetch.validate_hostname_safety.
 
     This method only checks localhost names and IP literals. Non-IP hostnames
     pass through without DNS resolution: their records are validated at
     connection time by GlobalOnlyResolver (see test_global_only_resolver.py).
     """
 
-    def setUp(self):
-        self.tool = WebFetch()
-
     def _call(self, hostname: str) -> None:
         """Invoke _validate_hostname_safety with the given hostname."""
-        self.tool._validate_hostname_safety(hostname)  # pylint: disable=protected-access
+        SafeFetch.validate_hostname_safety(hostname)
 
     def test_non_ip_hostname_allowed_without_dns(self):
         """Tests that a non-IP hostname passes without a DNS lookup (validated later by the resolver)."""

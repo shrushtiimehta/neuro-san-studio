@@ -22,22 +22,19 @@ from unittest.mock import MagicMock
 from aiohttp import ClientError
 from aiohttp import ClientResponseError
 
-from neuro_san_studio.coded_tools.web_fetch import MAX_RESPONSE_BYTES
-from neuro_san_studio.coded_tools.web_fetch import WebFetch
-from tests.neuro_san_studio.coded_tools.web_fetch.helpers import make_head_session
-from tests.neuro_san_studio.coded_tools.web_fetch.helpers import make_response_error
+from neuro_san_studio.coded_tools.utils.safe_fetch import MAX_RESPONSE_BYTES
+from neuro_san_studio.coded_tools.utils.safe_fetch import SafeFetch
+from tests.neuro_san_studio.coded_tools.utils.safe_fetch.helpers import make_head_session
+from tests.neuro_san_studio.coded_tools.utils.safe_fetch.helpers import make_response_error
 
 
 class TestGetContentType(TestCase):
-    """Unit tests for WebFetch._get_content_type."""
-
-    def setUp(self):
-        self.tool = WebFetch()
+    """Unit tests for SafeFetch.get_content_type."""
 
     def test_head_success_returns_content_type(self):
         """Tests that a successful HEAD response returns the Content-Type header value with no prefetched body."""
         session, _ = make_head_session(status=200, content_type="text/html; charset=utf-8")
-        content_type, body = asyncio.run(self.tool._get_content_type("http://example.com", session))  # pylint: disable=protected-access
+        content_type, body = asyncio.run(SafeFetch.get_content_type("http://example.com", session))
         self.assertEqual(content_type, "text/html; charset=utf-8")
         self.assertIsNone(body)
 
@@ -53,7 +50,7 @@ class TestGetContentType(TestCase):
         get_cm.__aexit__ = AsyncMock(return_value=False)
         session.get = MagicMock(return_value=get_cm)
 
-        content_type, body = asyncio.run(self.tool._get_content_type("http://example.com", session))  # pylint: disable=protected-access
+        content_type, body = asyncio.run(SafeFetch.get_content_type("http://example.com", session))
         self.assertEqual(content_type, "application/pdf")
         self.assertIsNone(body)
         session.get.assert_called_once()
@@ -71,7 +68,7 @@ class TestGetContentType(TestCase):
         get_cm.__aexit__ = AsyncMock(return_value=False)
         session.get = MagicMock(return_value=get_cm)
 
-        content_type, body = asyncio.run(self.tool._get_content_type("http://example.com", session))  # pylint: disable=protected-access
+        content_type, body = asyncio.run(SafeFetch.get_content_type("http://example.com", session))
         self.assertEqual(content_type, "text/html")
         self.assertEqual(body, "<html>Hello</html>")
 
@@ -80,7 +77,7 @@ class TestGetContentType(TestCase):
         exc = make_response_error(404)
         session, _ = make_head_session(status=404, raise_for_status_exc=exc)
         with self.assertRaises(ClientResponseError) as ctx:
-            asyncio.run(self.tool._get_content_type("http://example.com", session))  # pylint: disable=protected-access
+            asyncio.run(SafeFetch.get_content_type("http://example.com", session))
         self.assertIn("url_not_accessible", ctx.exception.message)
         self.assertEqual(ctx.exception.status, 404)
 
@@ -89,7 +86,7 @@ class TestGetContentType(TestCase):
         exc = make_response_error(429)
         session, _ = make_head_session(status=429, raise_for_status_exc=exc)
         with self.assertRaises(ClientResponseError) as ctx:
-            asyncio.run(self.tool._get_content_type("http://example.com", session))  # pylint: disable=protected-access
+            asyncio.run(SafeFetch.get_content_type("http://example.com", session))
         self.assertIn("too_many_requests", ctx.exception.message)
 
     def test_connection_error_raises_with_url_not_accessible_prefix(self):
@@ -101,7 +98,7 @@ class TestGetContentType(TestCase):
         session.head = MagicMock(return_value=head_cm)
 
         with self.assertRaises(ClientError) as ctx:
-            asyncio.run(self.tool._get_content_type("http://example.com", session))  # pylint: disable=protected-access
+            asyncio.run(SafeFetch.get_content_type("http://example.com", session))
         self.assertIn("url_not_accessible", str(ctx.exception))
 
     def test_timeout_raises_with_url_not_accessible_prefix(self):
@@ -113,21 +110,21 @@ class TestGetContentType(TestCase):
         session.head = MagicMock(return_value=head_cm)
 
         with self.assertRaises(ClientError) as ctx:
-            asyncio.run(self.tool._get_content_type("http://example.com", session))  # pylint: disable=protected-access
+            asyncio.run(SafeFetch.get_content_type("http://example.com", session))
         self.assertIn("url_not_accessible", str(ctx.exception))
 
     def test_content_length_over_limit_raises_response_too_large(self):
         """Tests that a Content-Length header exceeding the limit raises ValueError with response_too_large."""
         session, _ = make_head_session(status=200, content_type="text/html", content_length=MAX_RESPONSE_BYTES + 1)
         with self.assertRaises(ValueError) as ctx:
-            asyncio.run(self.tool._get_content_type("http://example.com", session))  # pylint: disable=protected-access
+            asyncio.run(SafeFetch.get_content_type("http://example.com", session))
         self.assertIn("response_too_large", str(ctx.exception))
 
     def test_head_redirect_raises_url_not_allowed(self):
         """Tests that a 3xx HEAD response raises ValueError containing url_not_allowed and the Location URL."""
         session, _ = make_head_session(status=301, extra_headers={"Location": "http://other.com/"})
         with self.assertRaises(ValueError) as ctx:
-            asyncio.run(self.tool._get_content_type("http://example.com", session))  # pylint: disable=protected-access
+            asyncio.run(SafeFetch.get_content_type("http://example.com", session))
         error = str(ctx.exception)
         self.assertIn("url_not_allowed", error)
         self.assertIn("http://other.com/", error)
@@ -144,7 +141,7 @@ class TestGetContentType(TestCase):
         session.get = MagicMock(return_value=get_cm)
 
         with self.assertRaises(ValueError) as ctx:
-            asyncio.run(self.tool._get_content_type("http://example.com", session))  # pylint: disable=protected-access
+            asyncio.run(SafeFetch.get_content_type("http://example.com", session))
         error = str(ctx.exception)
         self.assertIn("url_not_allowed", error)
         self.assertIn("http://other.com/", error)

@@ -22,28 +22,25 @@ from unittest.mock import MagicMock
 from aiohttp import ClientError
 from aiohttp import ClientResponseError
 
-from neuro_san_studio.coded_tools.web_fetch import WebFetch
-from tests.neuro_san_studio.coded_tools.web_fetch.helpers import make_get_response
-from tests.neuro_san_studio.coded_tools.web_fetch.helpers import make_response_error
+from neuro_san_studio.coded_tools.utils.safe_fetch import SafeFetch
+from tests.neuro_san_studio.coded_tools.utils.safe_fetch.helpers import make_get_response
+from tests.neuro_san_studio.coded_tools.utils.safe_fetch.helpers import make_response_error
 
 
 class TestFetchText(TestCase):
-    """Unit tests for WebFetch._fetch_text."""
-
-    def setUp(self):
-        self.tool = WebFetch()
+    """Unit tests for SafeFetch.fetch_text."""
 
     def test_plain_text_returned_as_is(self):
         """Tests that plain text body content is returned unchanged."""
         session, _ = make_get_response(body="just plain text")
-        result = asyncio.run(self.tool._fetch_text("http://example.com", session))  # pylint: disable=protected-access
+        result = asyncio.run(SafeFetch.fetch_text("http://example.com", session))
         self.assertEqual(result, "just plain text")
 
     def test_html_is_stripped(self):
         """Tests that HTML tags, scripts, and styles are stripped from the fetched content."""
         html = "<html><head><style>body{}</style></head><body><p>Hello</p><script>alert(1)</script></body></html>"
         session, _ = make_get_response(body=html)
-        result = asyncio.run(self.tool._fetch_text("http://example.com", session))  # pylint: disable=protected-access
+        result = asyncio.run(SafeFetch.fetch_text("http://example.com", session))
         self.assertIn("Hello", result)
         self.assertNotIn("<p>", result)
         self.assertNotIn("alert", result)
@@ -54,7 +51,7 @@ class TestFetchText(TestCase):
         exc = make_response_error(503)
         session, _ = make_get_response(status=503, raise_for_status_exc=exc)
         with self.assertRaises(ClientResponseError) as ctx:
-            asyncio.run(self.tool._fetch_text("http://example.com", session))  # pylint: disable=protected-access
+            asyncio.run(SafeFetch.fetch_text("http://example.com", session))
         self.assertIn("url_not_accessible", ctx.exception.message)
 
     def test_429_raises_with_too_many_requests_prefix(self):
@@ -62,7 +59,7 @@ class TestFetchText(TestCase):
         exc = make_response_error(429)
         session, _ = make_get_response(status=429, raise_for_status_exc=exc)
         with self.assertRaises(ClientResponseError) as ctx:
-            asyncio.run(self.tool._fetch_text("http://example.com", session))  # pylint: disable=protected-access
+            asyncio.run(SafeFetch.fetch_text("http://example.com", session))
         self.assertIn("too_many_requests", ctx.exception.message)
 
     def test_redirect_raises_url_not_allowed(self):
@@ -71,7 +68,7 @@ class TestFetchText(TestCase):
         response.headers["Location"] = "http://other.com/"
 
         with self.assertRaises(ValueError) as ctx:
-            asyncio.run(self.tool._fetch_text("http://example.com", session))  # pylint: disable=protected-access
+            asyncio.run(SafeFetch.fetch_text("http://example.com", session))
         error = str(ctx.exception)
         self.assertIn("url_not_allowed", error)
         self.assertIn("http://other.com/", error)
@@ -85,5 +82,5 @@ class TestFetchText(TestCase):
         session.get = MagicMock(return_value=response_cm)
 
         with self.assertRaises(ClientError) as ctx:
-            asyncio.run(self.tool._fetch_text("http://example.com", session))  # pylint: disable=protected-access
+            asyncio.run(SafeFetch.fetch_text("http://example.com", session))
         self.assertIn("url_not_accessible", str(ctx.exception))

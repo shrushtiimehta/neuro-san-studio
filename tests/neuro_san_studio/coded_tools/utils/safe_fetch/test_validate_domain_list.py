@@ -16,18 +16,15 @@
 
 from unittest import TestCase
 
-from neuro_san_studio.coded_tools.web_fetch import WebFetch
+from neuro_san_studio.coded_tools.utils.safe_fetch import SafeFetch
 
 
 class TestValidateDomainList(TestCase):
-    """Unit tests for WebFetch._validate_domain_list."""
-
-    def setUp(self):
-        self.tool = WebFetch()
+    """Unit tests for SafeFetch.validate_domain_list."""
 
     def _call(self, value, param_name="test_param"):
         """Invoke _validate_domain_list with the given value and return the result."""
-        return self.tool._validate_domain_list(value, param_name)  # pylint: disable=protected-access
+        return SafeFetch.validate_domain_list(value, param_name)
 
     def test_none_returns_empty_list(self):
         """Tests that passing None returns an empty list."""

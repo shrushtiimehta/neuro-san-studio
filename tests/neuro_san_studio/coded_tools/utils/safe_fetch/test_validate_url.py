@@ -16,23 +16,20 @@
 
 from unittest import TestCase
 
-from neuro_san_studio.coded_tools.web_fetch import MAX_URL_LENGTH
-from neuro_san_studio.coded_tools.web_fetch import WebFetch
+from neuro_san_studio.coded_tools.utils.safe_fetch import MAX_URL_LENGTH
+from neuro_san_studio.coded_tools.utils.safe_fetch import SafeFetch
 
 
 class TestValidateUrl(TestCase):  # pylint: disable=too-many-public-methods
-    """Unit tests for WebFetch._validate_url.
+    """Unit tests for SafeFetch.validate_url.
 
     Validation performs no DNS lookups; DNS records are validated at connection
     time by GlobalOnlyResolver (see test_global_only_resolver.py).
     """
 
-    def setUp(self):
-        self.tool = WebFetch()
-
     def _call(self, args):
-        """Invoke _validate_url with the given args dict and return the result."""
-        return self.tool._validate_url(args)  # pylint: disable=protected-access
+        """Invoke validate_url with the given args dict and return the result."""
+        return SafeFetch.validate_url(args.get("url", ""), args.get("allowed_domains"), args.get("blocked_domains"))
 
     def test_valid_http_url(self):
         """Tests that a valid HTTP URL is accepted."""

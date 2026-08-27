@@ -25,10 +25,10 @@ from aiohttp import ClientError
 from aiohttp import ClientResponseError
 from pypdf import PdfWriter
 
-from neuro_san_studio.coded_tools.web_fetch import MAX_RESPONSE_BYTES
-from neuro_san_studio.coded_tools.web_fetch import WebFetch
-from tests.neuro_san_studio.coded_tools.web_fetch.helpers import make_response_error
-from tests.neuro_san_studio.coded_tools.web_fetch.helpers import make_stream_session
+from neuro_san_studio.coded_tools.utils.safe_fetch import MAX_RESPONSE_BYTES
+from neuro_san_studio.coded_tools.utils.safe_fetch import SafeFetch
+from tests.neuro_san_studio.coded_tools.utils.safe_fetch.helpers import make_response_error
+from tests.neuro_san_studio.coded_tools.utils.safe_fetch.helpers import make_stream_session
 
 
 def make_pdf_bytes(pages: int = 1) -> bytes:
@@ -42,14 +42,11 @@ def make_pdf_bytes(pages: int = 1) -> bytes:
 
 
 class TestFetchPdf(TestCase):
-    """Unit tests for WebFetch._fetch_pdf."""
-
-    def setUp(self):
-        self.tool = WebFetch()
+    """Unit tests for SafeFetch.fetch_pdf_text."""
 
     def _call(self, url: str, session) -> str:
         """Invoke _fetch_pdf with the given URL and session."""
-        return asyncio.run(self.tool._fetch_pdf(url, session))  # pylint: disable=protected-access
+        return asyncio.run(SafeFetch.fetch_pdf_text(url, session))
 
     def test_returns_joined_page_text(self):
         """Tests that text from all PDF pages is joined into a single newline-separated string."""
@@ -60,7 +57,7 @@ class TestFetchPdf(TestCase):
         mock_reader.pages = pages
 
         with (
-            patch.object(self.tool, "_download_pdf_bytes", new=AsyncMock(return_value=b"%PDF-fake")),
+            patch.object(SafeFetch, "download_pdf_bytes", new=AsyncMock(return_value=b"%PDF-fake")),
             patch("neuro_san_studio.coded_tools.utils.pdf_utils.PdfReader", return_value=mock_reader),
         ):
             result = self._call("http://example.com/doc.pdf", MagicMock())
@@ -77,7 +74,7 @@ class TestFetchPdf(TestCase):
         mock_reader.pages = pages
 
         with (
-            patch.object(self.tool, "_download_pdf_bytes", new=AsyncMock(return_value=b"%PDF-fake")),
+            patch.object(SafeFetch, "download_pdf_bytes", new=AsyncMock(return_value=b"%PDF-fake")),
             patch("neuro_san_studio.coded_tools.utils.pdf_utils.PdfReader", return_value=mock_reader),
         ):
             result = self._call("http://example.com/doc.pdf", MagicMock())
@@ -87,13 +84,13 @@ class TestFetchPdf(TestCase):
     def test_real_pdf_bytes_parse_successfully(self):
         """Tests that genuine PDF bytes are parsed by real pypdf without errors."""
         data = make_pdf_bytes(pages=2)
-        with patch.object(self.tool, "_download_pdf_bytes", new=AsyncMock(return_value=data)):
+        with patch.object(SafeFetch, "download_pdf_bytes", new=AsyncMock(return_value=data)):
             result = self._call("http://example.com/doc.pdf", MagicMock())
         self.assertIsInstance(result, str)
 
     def test_invalid_pdf_bytes_raise_client_error_with_prefix(self):
         """Tests that unparseable PDF bytes raise ClientError with url_not_accessible prefix."""
-        with patch.object(self.tool, "_download_pdf_bytes", new=AsyncMock(return_value=b"not a pdf")):
+        with patch.object(SafeFetch, "download_pdf_bytes", new=AsyncMock(return_value=b"not a pdf")):
             with self.assertRaises(ClientError) as ctx:
                 self._call("http://example.com/doc.pdf", MagicMock())
         self.assertIn("url_not_accessible", str(ctx.exception))
@@ -109,14 +106,11 @@ class TestFetchPdf(TestCase):
 
 
 class TestDownloadPdfBytes(TestCase):
-    """Unit tests for WebFetch._download_pdf_bytes."""
-
-    def setUp(self):
-        self.tool = WebFetch()
+    """Unit tests for SafeFetch.download_pdf_bytes."""
 
     def _call(self, session, url: str = "http://example.com/doc.pdf") -> bytes:
         """Invoke _download_pdf_bytes with the given mocked session."""
-        return asyncio.run(self.tool._download_pdf_bytes(url, session))  # pylint: disable=protected-access
+        return asyncio.run(SafeFetch.download_pdf_bytes(url, session))
 
     def test_joins_streamed_chunks(self):
         """Tests that streamed chunks are concatenated into the full body."""
@@ -158,7 +152,7 @@ class TestDownloadPdfBytes(TestCase):
         so only the running byte count can enforce the cap.
         """
         session, _ = make_stream_session([b"x" * 8, b"y" * 8])
-        with patch("neuro_san_studio.coded_tools.web_fetch.MAX_RESPONSE_BYTES", 10):
+        with patch("neuro_san_studio.coded_tools.utils.safe_fetch.MAX_RESPONSE_BYTES", 10):
             with self.assertRaises(ValueError) as ctx:
                 self._call(session)
         self.assertIn("response_too_large", str(ctx.exception))
