@@ -18,6 +18,7 @@ import asyncio
 from unittest import TestCase
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
+from unittest.mock import patch
 
 from aiohttp import ClientError
 from aiohttp import ClientResponseError
@@ -26,6 +27,8 @@ from neuro_san_studio.coded_tools.utils.safe_fetch import MAX_RESPONSE_BYTES
 from neuro_san_studio.coded_tools.utils.safe_fetch import SafeFetch
 from tests.neuro_san_studio.coded_tools.utils.safe_fetch.helpers import make_head_session
 from tests.neuro_san_studio.coded_tools.utils.safe_fetch.helpers import make_response_error
+
+MODULE = "neuro_san_studio.coded_tools.utils.safe_fetch"
 
 
 class TestGetContentType(TestCase):
@@ -61,8 +64,13 @@ class TestGetContentType(TestCase):
         get_response = MagicMock()
         get_response.status = 200
         get_response.headers = {"Content-Type": "text/html"}
+        get_response.charset = "utf-8"
         get_response.raise_for_status = MagicMock()
-        get_response.text = AsyncMock(return_value="<html>Hello</html>")
+
+        async def iter_chunked(_chunk_size):
+            yield b"<html>Hello</html>"
+
+        get_response.content.iter_chunked = iter_chunked
         get_cm = MagicMock()
         get_cm.__aenter__ = AsyncMock(return_value=get_response)
         get_cm.__aexit__ = AsyncMock(return_value=False)
@@ -71,6 +79,55 @@ class TestGetContentType(TestCase):
         content_type, body = asyncio.run(SafeFetch.get_content_type("http://example.com", session))
         self.assertEqual(content_type, "text/html")
         self.assertEqual(body, "<html>Hello</html>")
+
+    def test_head_405_non_text_type_skips_body_read(self):
+        """Tests that a 405 fallback GET does not read the body for non-text content types.
+
+        A binary/unsupported type is returned with body None so the caller rejects it
+        without downloading a body that would only be discarded.
+        """
+        session, _ = make_head_session(status=405)
+        get_response = MagicMock()
+        get_response.status = 200
+        get_response.headers = {"Content-Type": "image/png"}
+        get_response.raise_for_status = MagicMock()
+        get_response.text = AsyncMock(return_value="binary-should-not-be-read")
+        get_cm = MagicMock()
+        get_cm.__aenter__ = AsyncMock(return_value=get_response)
+        get_cm.__aexit__ = AsyncMock(return_value=False)
+        session.get = MagicMock(return_value=get_cm)
+
+        content_type, body = asyncio.run(SafeFetch.get_content_type("http://example.com", session))
+        self.assertEqual(content_type, "image/png")
+        self.assertIsNone(body)
+        get_response.text.assert_not_awaited()
+
+    def test_head_405_text_body_over_limit_raises(self):
+        """Tests that the 405 text prefetch enforces the streamed byte cap, not just Content-Length.
+
+        No Content-Length header is set, so only the running byte count on the
+        streamed body can catch an oversized response (the server-lies case).
+        """
+        session, _ = make_head_session(status=405)
+        get_response = MagicMock()
+        get_response.status = 200
+        get_response.headers = {"Content-Type": "text/html"}
+        get_response.charset = "utf-8"
+        get_response.raise_for_status = MagicMock()
+
+        async def iter_chunked(_chunk_size):
+            yield b"x" * 50
+
+        get_response.content.iter_chunked = iter_chunked
+        get_cm = MagicMock()
+        get_cm.__aenter__ = AsyncMock(return_value=get_response)
+        get_cm.__aexit__ = AsyncMock(return_value=False)
+        session.get = MagicMock(return_value=get_cm)
+
+        with patch(f"{MODULE}.MAX_RESPONSE_BYTES", 10):
+            with self.assertRaises(ValueError) as ctx:
+                asyncio.run(SafeFetch.get_content_type("http://example.com", session))
+        self.assertIn("response_too_large", str(ctx.exception))
 
     def test_non_2xx_raises_with_url_not_accessible_prefix(self):
         """Tests that a non-2xx HTTP error raises ClientResponseError with url_not_accessible prefix."""

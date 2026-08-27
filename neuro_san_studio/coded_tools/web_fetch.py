@@ -97,7 +97,7 @@ class WebFetch(CodedTool):
             content_type, prefetched_text = await SafeFetch.get_content_type(url, session)
             is_pdf: bool = "application/pdf" in content_type or url.lower().endswith(".pdf")
 
-            if not is_pdf and not any(ct in content_type for ct in SUPPORTED_CONTENT_TYPES):
+            if not is_pdf and not self._is_supported_content_type(content_type):
                 raise ValueError(
                     f"unsupported_content_type: Content type '{content_type}' is not supported. "
                     "Only text/HTML and PDF are accepted."
@@ -126,9 +126,34 @@ class WebFetch(CodedTool):
         }
 
     @staticmethod
+    def _is_supported_content_type(content_type: str) -> bool:
+        """
+        Report whether a Content-Type matches one of the supported text/PDF types.
+
+        :param content_type: The raw Content-Type header value (may include params).
+        :return: True if any SUPPORTED_CONTENT_TYPES entry appears in the value.
+        """
+        for supported in SUPPORTED_CONTENT_TYPES:
+            if supported in content_type:
+                return True
+        return False
+
+    @staticmethod
     def _validate_max_content_chars(args: dict[str, Any]) -> int:
-        """Return a validated max_content_chars value, raising invalid_input on bad input."""
-        value: int = args.get("max_content_chars") or MAX_CHARS
-        if not isinstance(value, int) or value <= 0:
+        """
+        Validate the optional max_content_chars argument and return its value.
+
+        :param args: The tool argument dictionary; "max_content_chars" is optional.
+        :return: The validated positive-integer character cap, defaulting to MAX_CHARS
+                 when the key is absent or None.
+        :raises ValueError: invalid_input when the value is present but not a positive
+                int (0, a negative number, a bool, or a non-int all fail).
+        """
+        value: Any = args.get("max_content_chars")
+        if value is None:
+            return MAX_CHARS
+        # bool is a subclass of int, so reject it explicitly; True would otherwise
+        # pass as 1 and silently truncate output to a single character.
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise ValueError(f"invalid_input: 'max_content_chars' must be a positive integer, got {value!r}.")
         return value

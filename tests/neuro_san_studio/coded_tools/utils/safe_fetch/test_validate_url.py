@@ -20,7 +20,7 @@ from neuro_san_studio.coded_tools.utils.safe_fetch import MAX_URL_LENGTH
 from neuro_san_studio.coded_tools.utils.safe_fetch import SafeFetch
 
 
-class TestValidateUrl(TestCase):  # pylint: disable=too-many-public-methods
+class TestValidateUrl(TestCase):
     """Unit tests for SafeFetch.validate_url.
 
     Validation performs no DNS lookups; DNS records are validated at connection

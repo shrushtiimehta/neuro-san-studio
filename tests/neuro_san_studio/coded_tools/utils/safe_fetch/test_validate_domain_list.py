@@ -23,7 +23,7 @@ class TestValidateDomainList(TestCase):
     """Unit tests for SafeFetch.validate_domain_list."""
 
     def _call(self, value, param_name="test_param"):
-        """Invoke _validate_domain_list with the given value and return the result."""
+        """Invoke validate_domain_list with the given value and return the result."""
         return SafeFetch.validate_domain_list(value, param_name)
 
     def test_none_returns_empty_list(self):

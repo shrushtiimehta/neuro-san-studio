@@ -21,6 +21,7 @@ from ipaddress import IPv4Address
 from ipaddress import IPv6Address
 from ipaddress import ip_address
 from typing import Any
+from typing import NoReturn
 from urllib.parse import ParseResult
 from urllib.parse import urlparse
 
@@ -37,17 +38,19 @@ from neuro_san_studio.coded_tools.utils.pdf_utils import PdfUtils
 
 MAX_URL_LENGTH: int = 250
 # Maximum bytes accepted via Content-Length header before downloading; also the
-# running cap enforced on streamed PDF bodies.
+# running cap enforced on streamed response bodies (text and PDF alike).
 MAX_RESPONSE_BYTES: int = 10 * 1024 * 1024  # 10 MB
-# Read size per iteration when streaming a PDF body.
+# Read size per iteration when streaming a response body.
 DOWNLOAD_CHUNK_BYTES: int = 64 * 1024
 TIMEOUT_SECONDS: int = 15
 
 
 class SafeFetch:
     """
-    Shared SSRF-hardened URL fetching used by every coded tool that retrieves
-    remote content (WebFetch, webpage RAG, PDF RAG).
+    Shared SSRF-hardened URL fetching for coded tools that retrieve remote content.
+
+    Currently used by WebFetch; intended for reuse by the RAG tools (webpage RAG,
+    PDF RAG) as they migrate onto it.
 
     SSRF protection blocks private/loopback/reserved ranges and localhost.
     Localhost names and IP literals are rejected up front (validate_hostname_safety);
@@ -71,17 +74,22 @@ class SafeFetch:
                                     or returns a redirect.
         url_not_accessible       – HTTP error or network failure while fetching the page.
         too_many_requests        – Server returned HTTP 429.
-        response_too_large       – Content-Length header or streamed PDF body exceeds MAX_RESPONSE_BYTES.
+        response_too_large       – Content-Length header or streamed body exceeds MAX_RESPONSE_BYTES.
     """
 
     @staticmethod
     def open_session() -> ClientSession:
-        """Create a ClientSession that enforces the SSRF policy on every connection.
+        """
+        Create a ClientSession that enforces the SSRF policy on every connection.
 
         GlobalOnlyResolver enforces the SSRF policy on the exact addresses the
         client connects to (anti DNS-rebinding). The connector's DNS cache is
         disabled so every new connection re-validates instead of reusing a
-        previously cached answer. The session owns the connector and closes it.
+        previously cached answer.
+
+        :return: A new ClientSession whose connector validates every resolved
+                 address and disables DNS caching. The caller owns the session and
+                 must close it (use it as an async context manager).
         """
         timeout = ClientTimeout(total=TIMEOUT_SECONDS)
         connector = TCPConnector(resolver=GlobalOnlyResolver(), use_dns_cache=False)
@@ -89,7 +97,18 @@ class SafeFetch:
 
     @staticmethod
     def validate_url(url_value: Any, allowed_domains: Any = None, blocked_domains: Any = None) -> str:
-        """Validate URL format, length, and domain rules. Returns the cleaned URL."""
+        """
+        Validate a URL's format, length, and domain rules and return the cleaned URL.
+
+        :param url_value: The candidate URL; must be an http/https string.
+        :param allowed_domains: Optional allow-list (str or list[str]); if non-empty,
+                                the host must equal or be a subdomain of one entry.
+        :param blocked_domains: Optional block-list (str or list[str]); the host must
+                                not equal or be a subdomain of any entry.
+        :return: The stripped, validated URL.
+        :raises ValueError: invalid_input, url_too_long, or url_not_allowed when the
+                URL fails any format, length, domain, or hostname-safety check.
+        """
         if not isinstance(url_value, str):
             raise ValueError(f"invalid_input: 'url' must be a string, got {url_value!r}.")
 
@@ -108,21 +127,16 @@ class SafeFetch:
         if not raw_hostname:
             raise ValueError("invalid_input: URL must include a hostname.")
 
-        # Use parsed.hostname (strips port/credentials) and enforce a strict domain boundary:
-        # an allowed/blocked entry "example.com" matches "example.com" and "sub.example.com"
-        # but not "badexample.com".
+        # Use parsed.hostname (strips port/credentials) and enforce a strict domain
+        # boundary via _hostname_matches_any (see that helper).
         hostname: str = raw_hostname.lower()
 
         allowed: list[str] = SafeFetch.validate_domain_list(allowed_domains, "allowed_domains")
-        if allowed and not any(
-            hostname == domain.lower() or hostname.endswith("." + domain.lower()) for domain in allowed
-        ):
+        if allowed and not SafeFetch._hostname_matches_any(hostname, allowed):
             raise ValueError(f"url_not_allowed: Domain '{hostname}' is not in the allowed_domains list.")
 
         blocked: list[str] = SafeFetch.validate_domain_list(blocked_domains, "blocked_domains")
-        if blocked and any(
-            hostname == domain.lower() or hostname.endswith("." + domain.lower()) for domain in blocked
-        ):
+        if blocked and SafeFetch._hostname_matches_any(hostname, blocked):
             raise ValueError(f"url_not_allowed: Domain '{hostname}' is blocked.")
 
         SafeFetch.validate_hostname_safety(hostname)
@@ -130,8 +144,28 @@ class SafeFetch:
         return url
 
     @staticmethod
+    def _hostname_matches_any(hostname: str, domains: list[str]) -> bool:
+        """
+        Return whether a hostname matches any domain under a strict boundary.
+
+        A domain entry "example.com" matches the host "example.com" and any
+        subdomain "sub.example.com", but not "badexample.com". Matching is
+        case-insensitive.
+
+        :param hostname: The already-lower-cased host to test.
+        :param domains: The domain entries to test against.
+        :return: True if the hostname equals or is a subdomain of any entry.
+        """
+        for domain in domains:
+            lowered: str = domain.lower()
+            if hostname == lowered or hostname.endswith("." + lowered):
+                return True
+        return False
+
+    @staticmethod
     def validate_hostname_safety(hostname: str) -> None:
-        """Reject localhost names and IP literals that are not globally routable.
+        """
+        Reject localhost names and IP literals that are not globally routable.
 
         Non-IP hostnames are intentionally NOT DNS-resolved here: their records are
         validated at connection time by GlobalOnlyResolver on the session's
@@ -149,6 +183,10 @@ class SafeFetch:
         is_ip_address() accepts but ipaddress.ip_address() cannot parse (e.g. the
         integer form "2130706433" or shorthand "127.1", which resolve to loopback)
         is rejected rather than deferred to a resolver that will never run for it.
+
+        :param hostname: The already-lower-cased host to check.
+        :raises ValueError: url_not_allowed when the host is localhost, an
+                unparseable/zoned/shorthand IP literal, or a non-global IP literal.
         """
         if hostname == "localhost" or hostname.endswith(".localhost"):
             raise ValueError(f"url_not_allowed: Host '{hostname}' targets a loopback address.")
@@ -187,7 +225,16 @@ class SafeFetch:
 
     @staticmethod
     def validate_domain_list(value: Any, param_name: str) -> list[str]:
-        """Coerce and validate a domain list parameter. Accepts None, list[str], or a single str."""
+        """
+        Coerce and validate a domain-list parameter.
+
+        :param value: The parameter to coerce; accepts None, a single str, or a
+                      list[str].
+        :param param_name: The parameter's name, used in error messages.
+        :return: The domains as a list[str] (empty for None, single-element for a str).
+        :raises ValueError: invalid_input when value is neither None, str, nor a
+                list of strings.
+        """
         if value is None:
             return []
         if isinstance(value, str):
@@ -204,15 +251,25 @@ class SafeFetch:
 
     @staticmethod
     def is_redirection(status: int) -> bool:
-        """Return True if the HTTP status code is a 3xx redirection."""
+        """
+        Report whether an HTTP status code is a 3xx redirection.
+
+        :param status: The HTTP status code.
+        :return: True if the status is in the 3xx range.
+        """
         return 300 <= status <= 399
 
     @staticmethod
     def raise_if_redirect(response: Any, url: str) -> None:
-        """Raise ValueError with url_not_allowed if the response is a 3xx redirect.
+        """
+        Raise url_not_allowed if the response is a 3xx redirect.
 
-        Must be called explicitly when allow_redirects=False, because raise_for_status()
-        only covers 4xx/5xx and silently passes 3xx responses through.
+        Must be called explicitly when allow_redirects=False, because
+        raise_for_status() only covers 4xx/5xx and silently passes 3xx through.
+
+        :param response: The aiohttp response to inspect.
+        :param url: The URL being fetched, included in the raised message.
+        :raises ValueError: url_not_allowed when the response status is a 3xx redirect.
         """
         if SafeFetch.is_redirection(response.status):
             location: str = response.headers.get("Location", "unknown")
@@ -221,16 +278,36 @@ class SafeFetch:
             )
 
     @staticmethod
+    def _is_text_content_type(content_type: str) -> bool:
+        """
+        Report whether a Content-Type is text-like and worth prefetching as text.
+
+        :param content_type: The raw Content-Type header value (may include params).
+        :return: True for text/* and (x)html/xml types; False for PDF, binary, or
+                 anything else.
+        """
+        lowered: str = content_type.lower()
+        return lowered.startswith("text/") or "html" in lowered or "xml" in lowered
+
+    @staticmethod
     async def get_content_type(url: str, session: ClientSession) -> tuple[str, str | None]:
-        """Probe the URL with a HEAD request and return (Content-Type, prefetched_body).
+        """
+        Probe the URL with a HEAD request and return (Content-Type, prefetched_body).
 
         Falls back to a GET request if the server returns 405 (Method Not Allowed).
-        In the 405 case the response body is read and returned as the second element so
-        the caller can skip a second GET for text content types.
-        Redirects are not followed; a 3xx response raises ValueError with url_not_allowed.
-        Raises ClientResponseError with a url_not_accessible / too_many_requests prefix on non-2xx,
-        and ClientError with a url_not_accessible prefix on connection/DNS/timeout failures.
-        Raises ValueError with a response_too_large prefix when Content-Length exceeds MAX_RESPONSE_BYTES.
+        In the 405 case a text-like body is read and returned as the second element
+        so the caller can skip a second GET; PDF and other/binary content types
+        return None so their bodies are not downloaded here only to be discarded.
+
+        :param url: The URL to probe.
+        :param session: A session created by open_session (enforces the SSRF policy).
+        :return: A (content_type, prefetched_body) tuple; prefetched_body is the text
+                 body only on the 405 text-like path, otherwise None.
+        :raises ValueError: url_not_allowed on a redirect, or response_too_large when
+                the Content-Length header or the streamed 405 text body exceeds
+                MAX_RESPONSE_BYTES.
+        :raises aiohttp.ClientResponseError: url_not_accessible / too_many_requests on a non-2xx response.
+        :raises aiohttp.ClientError: url_not_accessible on a connection/DNS/timeout failure.
         """
         # Re-validate at the network boundary so the SSRF policy holds even if a
         # caller reached this method without calling validate_url first. Validation
@@ -241,34 +318,39 @@ class SafeFetch:
             async with session.head(url, allow_redirects=False) as head:
                 SafeFetch.raise_if_redirect(head, url)
                 if head.status == HTTPStatus.METHOD_NOT_ALLOWED:
-                    # Server does not support HEAD; probe with GET and read the body so
-                    # the caller can reuse it and avoid a second round-trip.
+                    # Server does not support HEAD; probe with GET and read the body
+                    # so the caller can reuse it and avoid a second round-trip.
                     async with session.get(url, allow_redirects=False) as get:
                         SafeFetch.raise_if_redirect(get, url)
                         get.raise_for_status()
                         SafeFetch.check_content_length(get.headers.get("Content-Length"), url)
                         content_type: str = get.headers.get("Content-Type", "")
-                        # Skip reading body for PDFs; fetch_pdf_text downloads the bytes separately.
-                        body: str | None = None if "application/pdf" in content_type else await get.text()
+                        # Only prefetch text-like bodies: a PDF is downloaded
+                        # separately by fetch_pdf_text, and any other/binary type is
+                        # rejected by the caller, so reading it here would download
+                        # bytes only to discard them.
+                        if SafeFetch._is_text_content_type(content_type):
+                            # Stream with the running byte cap (like fetch_raw); the
+                            # Content-Length pre-check above only guards honest servers.
+                            body: str | None = await SafeFetch._read_capped_text(get, url)
+                        else:
+                            body = None
                         return content_type, body
                 head.raise_for_status()
                 SafeFetch.check_content_length(head.headers.get("Content-Length"), url)
                 return head.headers.get("Content-Type", ""), None
-        except ClientResponseError as exc:
-            prefix: str = "too_many_requests" if exc.status == HTTPStatus.TOO_MANY_REQUESTS else "url_not_accessible"
-            raise ClientResponseError(
-                exc.request_info,
-                exc.history,
-                status=exc.status,
-                message=f"{prefix}: HTTP {exc.status} for '{url}'.",
-                headers=exc.headers,
-            ) from exc
         except (ClientError, AsyncTimeoutError) as exc:
-            raise ClientError(f"url_not_accessible: Could not reach '{url}': {exc}") from exc
+            SafeFetch._raise_translated(exc, url)
 
     @staticmethod
     def check_content_length(content_length_header: str | None, url: str) -> None:
-        """Raise ValueError if Content-Length exceeds MAX_RESPONSE_BYTES."""
+        """
+        Raise response_too_large if a Content-Length header exceeds MAX_RESPONSE_BYTES.
+
+        :param content_length_header: The Content-Length header value, or None if absent.
+        :param url: The URL being fetched, included in the raised message.
+        :raises ValueError: response_too_large when the parsed length exceeds the limit.
+        """
         if content_length_header is not None:
             try:
                 size = int(content_length_header)
@@ -282,12 +364,19 @@ class SafeFetch:
 
     @staticmethod
     async def fetch_pdf_text(url: str, session: ClientSession) -> str:
-        """Download a PDF through the protected session and extract its text with pypdf.
+        """
+        Download a PDF through the protected session and extract its text with pypdf.
 
-        The download must use a session created by open_session, so it inherits the
-        full SSRF policy: GlobalOnlyResolver validation at connection time (anti
-        DNS-rebinding), no redirects, and the session timeout. The body is streamed
-        with a running MAX_RESPONSE_BYTES cap (see download_pdf_bytes).
+        The download uses download_pdf_bytes, so it inherits the full SSRF policy and
+        the streamed MAX_RESPONSE_BYTES cap.
+
+        :param url: The PDF URL to fetch.
+        :param session: A session created by open_session (enforces the SSRF policy).
+        :return: The extracted text of the PDF.
+        :raises ValueError: url_not_allowed on a redirect, or response_too_large when
+                the body exceeds MAX_RESPONSE_BYTES.
+        :raises aiohttp.ClientResponseError: url_not_accessible / too_many_requests on a non-2xx response.
+        :raises aiohttp.ClientError: url_not_accessible on a download or PDF-parse failure.
         """
         data: bytes = await SafeFetch.download_pdf_bytes(url, session)
 
@@ -300,15 +389,20 @@ class SafeFetch:
 
     @staticmethod
     async def download_pdf_bytes(url: str, session: ClientSession) -> bytes:
-        """Stream a PDF body through the protected session, capping its size.
+        """
+        Stream a PDF body through the protected session, capping its size.
 
-        Unlike the text path, the MAX_RESPONSE_BYTES cap is enforced on the bytes
-        actually received (in addition to the Content-Length pre-check), so a server
-        that lies about or omits Content-Length cannot deliver an oversized body.
-        Redirects are not followed; a 3xx response raises ValueError with url_not_allowed.
-        Raises ClientResponseError with a url_not_accessible / too_many_requests prefix
-        on non-2xx, and ClientError with a url_not_accessible prefix on
-        connection/DNS/timeout failures.
+        The MAX_RESPONSE_BYTES cap is enforced on the bytes actually received (in
+        addition to the Content-Length pre-check), so a server that lies about or
+        omits Content-Length cannot deliver an oversized body.
+
+        :param url: The PDF URL to fetch.
+        :param session: A session created by open_session (enforces the SSRF policy).
+        :return: The raw PDF bytes.
+        :raises ValueError: url_not_allowed on a redirect, or response_too_large when
+                the streamed body exceeds MAX_RESPONSE_BYTES.
+        :raises aiohttp.ClientResponseError: url_not_accessible / too_many_requests on a non-2xx response.
+        :raises aiohttp.ClientError: url_not_accessible on a connection/DNS/timeout failure.
         """
         # Re-validate at the network boundary (see get_content_type).
         url = SafeFetch.validate_url(url)
@@ -317,42 +411,30 @@ class SafeFetch:
                 SafeFetch.raise_if_redirect(response, url)
                 response.raise_for_status()
                 SafeFetch.check_content_length(response.headers.get("Content-Length"), url)
-
-                chunks: list[bytes] = []
-                received: int = 0
-                async for chunk in response.content.iter_chunked(DOWNLOAD_CHUNK_BYTES):
-                    received += len(chunk)
-                    if received > MAX_RESPONSE_BYTES:
-                        raise ValueError(
-                            f"response_too_large: '{url}' PDF body exceeds the {MAX_RESPONSE_BYTES}-byte limit."
-                        )
-                    chunks.append(chunk)
-                return b"".join(chunks)
-        except ClientResponseError as exc:
-            prefix: str = "too_many_requests" if exc.status == HTTPStatus.TOO_MANY_REQUESTS else "url_not_accessible"
-            raise ClientResponseError(
-                exc.request_info,
-                exc.history,
-                status=exc.status,
-                message=f"{prefix}: HTTP {exc.status} for '{url}'.",
-                headers=exc.headers,
-            ) from exc
+                return await SafeFetch._read_capped_body(response, url)
         except (ClientError, AsyncTimeoutError) as exc:
-            raise ClientError(f"url_not_accessible: Failed to fetch '{url}': {exc}") from exc
+            SafeFetch._raise_translated(exc, url)
 
     @staticmethod
     async def fetch_raw(url: str, session: ClientSession) -> str:
-        """Fetch a URL via aiohttp GET and return its raw body text.
+        """
+        Fetch a URL via aiohttp GET and return its raw (undecoded-to-text) body.
 
         The body is streamed with the same running MAX_RESPONSE_BYTES cap as
-        download_pdf_bytes (in addition to the Content-Length pre-check), so a
-        server that lies about or omits Content-Length cannot deliver an oversized
-        body to a direct caller that skipped the HEAD probe in get_content_type.
-        Redirects are not followed; a 3xx response raises ValueError with url_not_allowed.
-        Raises ClientResponseError with a url_not_accessible / too_many_requests prefix
-        on non-2xx, and ClientError with a url_not_accessible prefix on
-        connection/DNS/timeout failures.
-        Raises ValueError with a response_too_large prefix when the body exceeds MAX_RESPONSE_BYTES.
+        download_pdf_bytes (in addition to the Content-Length pre-check), so a server
+        that lies about or omits Content-Length cannot deliver an oversized body to a
+        direct caller that skipped the HEAD probe in get_content_type. The bytes are
+        decoded once, after the full (capped) body is in hand, using the response's
+        declared charset (falling back to utf-8 and replacing undecodable bytes) so
+        multibyte sequences spanning chunk boundaries are never split.
+
+        :param url: The URL to fetch.
+        :param session: A session created by open_session (enforces the SSRF policy).
+        :return: The decoded response body (raw markup, not HTML-stripped).
+        :raises ValueError: url_not_allowed on a redirect, or response_too_large when
+                the streamed body exceeds MAX_RESPONSE_BYTES.
+        :raises aiohttp.ClientResponseError: url_not_accessible / too_many_requests on a non-2xx response.
+        :raises aiohttp.ClientError: url_not_accessible on a connection/DNS/timeout failure.
         """
         # Re-validate at the network boundary (see get_content_type).
         url = SafeFetch.validate_url(url)
@@ -364,23 +446,99 @@ class SafeFetch:
                 SafeFetch.raise_if_redirect(response, url)
                 response.raise_for_status()
                 SafeFetch.check_content_length(response.headers.get("Content-Length"), url)
+                return await SafeFetch._read_capped_text(response, url)
+        except (ClientError, AsyncTimeoutError) as exc:
+            SafeFetch._raise_translated(exc, url)
 
-                chunks: list[bytes] = []
-                received: int = 0
-                async for chunk in response.content.iter_chunked(DOWNLOAD_CHUNK_BYTES):
-                    received += len(chunk)
-                    if received > MAX_RESPONSE_BYTES:
-                        raise ValueError(
-                            f"response_too_large: '{url}' body exceeds the {MAX_RESPONSE_BYTES}-byte limit."
-                        )
-                    chunks.append(chunk)
-                # Decode once, after the full (capped) body is in hand, so multibyte
-                # sequences spanning chunk boundaries are never split. aiohttp's
-                # response.charset comes from the Content-Type header; fall back to
-                # utf-8 and replace undecodable bytes rather than raise.
-                encoding: str = response.charset or "utf-8"
-                return b"".join(chunks).decode(encoding, errors="replace")
-        except ClientResponseError as exc:
+    @staticmethod
+    async def _read_capped_body(response: Any, url: str) -> bytes:
+        """
+        Stream a response body into memory, enforcing the running byte cap.
+
+        :param response: The aiohttp response whose body to stream.
+        :param url: The URL being fetched, included in the raised message.
+        :return: The full response body as bytes (at most MAX_RESPONSE_BYTES).
+        :raises ValueError: response_too_large when the received bytes exceed the limit.
+        """
+        chunks: list[bytes] = []
+        received: int = 0
+        async for chunk in response.content.iter_chunked(DOWNLOAD_CHUNK_BYTES):
+            received += len(chunk)
+            if received > MAX_RESPONSE_BYTES:
+                raise ValueError(f"response_too_large: '{url}' body exceeds the {MAX_RESPONSE_BYTES}-byte limit.")
+            chunks.append(chunk)
+        return b"".join(chunks)
+
+    @staticmethod
+    async def _read_capped_text(response: Any, url: str) -> str:
+        """
+        Stream a response body with the byte cap, then decode it to text.
+
+        Decoding happens once, after the full (capped) body is in hand, so multibyte
+        sequences spanning chunk boundaries are never split. aiohttp's
+        response.charset comes from the Content-Type header; fall back to utf-8 and
+        replace undecodable bytes rather than raise.
+
+        :param response: The aiohttp response whose body to stream and decode.
+        :param url: The URL being fetched, included in the raised message.
+        :return: The decoded response body (at most MAX_RESPONSE_BYTES of raw bytes).
+        :raises ValueError: response_too_large when the received bytes exceed the limit.
+        """
+        body: bytes = await SafeFetch._read_capped_body(response, url)
+        encoding: str = response.charset or "utf-8"
+        return body.decode(encoding, errors="replace")
+
+    @staticmethod
+    async def fetch_text(url: str, session: ClientSession) -> str:
+        """
+        Fetch a URL via aiohttp GET and return its plain-text body, stripping HTML.
+
+        :param url: The URL to fetch.
+        :param session: A session created by open_session (enforces the SSRF policy).
+        :return: The response body with HTML markup stripped when present.
+        :raises ValueError: url_not_allowed on a redirect, or response_too_large when
+                the body exceeds MAX_RESPONSE_BYTES.
+        :raises aiohttp.ClientResponseError: url_not_accessible / too_many_requests on a non-2xx response.
+        :raises aiohttp.ClientError: url_not_accessible on a connection/DNS/timeout failure.
+        """
+        raw_content: str = await SafeFetch.fetch_raw(url, session)
+        return SafeFetch.parse_raw_text(raw_content)
+
+    @staticmethod
+    def parse_raw_text(raw: str) -> str:
+        """
+        Strip HTML markup from raw text if it looks like HTML; otherwise return as-is.
+
+        :param raw: The raw response body.
+        :return: The text with script/style/noscript removed and tags stripped when
+                 the body looks like HTML, else the input unchanged.
+        """
+        if not raw.lstrip().startswith("<"):
+            return raw
+        soup = BeautifulSoup(raw, "html.parser")
+        for tag in soup(["script", "style", "noscript"]):
+            tag.decompose()
+        return soup.get_text(separator="\n", strip=True)
+
+    @staticmethod
+    def _raise_translated(exc: BaseException, url: str) -> NoReturn:
+        """
+        Re-raise an aiohttp fetch error under the tool's error-prefix contract.
+
+        Consolidates the translation shared by get_content_type, fetch_raw, and
+        download_pdf_bytes: a non-2xx response becomes a ClientResponseError tagged
+        too_many_requests (HTTP 429) or url_not_accessible, and any other transport
+        error (connection failure, DNS failure, timeout) becomes a ClientError tagged
+        url_not_accessible.
+
+        :param exc: The caught aiohttp ClientError (possibly a ClientResponseError)
+                    or asyncio timeout to translate.
+        :param url: The URL being fetched, included in the raised message.
+        :raises aiohttp.ClientResponseError: when exc is a ClientResponseError, tagged
+                too_many_requests or url_not_accessible.
+        :raises aiohttp.ClientError: for any other transport failure, tagged url_not_accessible.
+        """
+        if isinstance(exc, ClientResponseError):
             prefix: str = "too_many_requests" if exc.status == HTTPStatus.TOO_MANY_REQUESTS else "url_not_accessible"
             raise ClientResponseError(
                 exc.request_info,
@@ -389,21 +547,4 @@ class SafeFetch:
                 message=f"{prefix}: HTTP {exc.status} for '{url}'.",
                 headers=exc.headers,
             ) from exc
-        except (ClientError, AsyncTimeoutError) as exc:
-            raise ClientError(f"url_not_accessible: Failed to fetch '{url}': {exc}") from exc
-
-    @staticmethod
-    async def fetch_text(url: str, session: ClientSession) -> str:
-        """Fetch a URL via aiohttp GET and return its plain-text body, stripping HTML if needed."""
-        raw_content: str = await SafeFetch.fetch_raw(url, session)
-        return SafeFetch.parse_raw_text(raw_content)
-
-    @staticmethod
-    def parse_raw_text(raw: str) -> str:
-        """Strip HTML markup from raw text if it looks like HTML; otherwise return as-is."""
-        if not raw.lstrip().startswith("<"):
-            return raw
-        soup = BeautifulSoup(raw, "html.parser")
-        for tag in soup(["script", "style", "noscript"]):
-            tag.decompose()
-        return soup.get_text(separator="\n", strip=True)
+        raise ClientError(f"url_not_accessible: Could not reach '{url}': {exc}") from exc

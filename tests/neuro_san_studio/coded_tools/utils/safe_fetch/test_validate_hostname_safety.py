@@ -28,7 +28,7 @@ class TestValidateHostnameSafety(TestCase):
     """
 
     def _call(self, hostname: str) -> None:
-        """Invoke _validate_hostname_safety with the given hostname."""
+        """Invoke validate_hostname_safety with the given hostname."""
         SafeFetch.validate_hostname_safety(hostname)
 
     def test_non_ip_hostname_allowed_without_dns(self):

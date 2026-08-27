@@ -24,7 +24,7 @@ class TestCheckContentLength(TestCase):
     """Unit tests for SafeFetch.check_content_length."""
 
     def _call(self, header, url="http://example.com"):
-        """Invoke _check_content_length with the given Content-Length header value."""
+        """Invoke check_content_length with the given Content-Length header value."""
         SafeFetch.check_content_length(header, url)
 
     def test_none_header_does_not_raise(self):

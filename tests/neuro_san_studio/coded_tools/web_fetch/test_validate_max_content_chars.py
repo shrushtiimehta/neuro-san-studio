@@ -42,15 +42,25 @@ class TestValidateMaxContentChars(TestCase):
         """Tests that a valid positive integer is accepted and returned as-is."""
         self.assertEqual(self._call({"max_content_chars": 500}), 500)
 
-    def test_zero_falls_back_to_default(self):
-        """Tests that zero (falsy) falls back to MAX_CHARS instead of raising."""
-        self.assertEqual(self._call({"max_content_chars": 0}), MAX_CHARS)
+    def test_zero_raises(self):
+        """Tests that zero is rejected as non-positive rather than silently defaulting."""
+        with self.assertRaises(ValueError) as ctx:
+            self._call({"max_content_chars": 0})
+        self.assertIn("invalid_input", str(ctx.exception))
 
     def test_negative_raises(self):
         """Tests that a negative value raises ValueError with invalid_input."""
         with self.assertRaises(ValueError) as ctx:
             self._call({"max_content_chars": -1})
         self.assertIn("invalid_input", str(ctx.exception))
+
+    def test_bool_raises(self):
+        """Tests that a bool (True/False) is rejected rather than treated as 1/0."""
+        for value in (True, False):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError) as ctx:
+                    self._call({"max_content_chars": value})
+                self.assertIn("invalid_input", str(ctx.exception))
 
     def test_string_raises(self):
         """Tests that a string value raises ValueError with invalid_input."""
