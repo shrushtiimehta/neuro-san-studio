@@ -159,6 +159,12 @@ class SafeFetch:
         # ("example.com.", "example.com。", "localhost。") from bypassing the block
         # list or the loopback guard.
         hostname = hostname.rstrip(".")
+        # A root-only authority ("http://./", "http://../") has a non-empty
+        # parsed.hostname but canonicalizes to an empty string here; reject it as
+        # invalid_input rather than let an empty host slip past the checks and reach
+        # DNS.
+        if not hostname:
+            raise ValueError("invalid_input: URL must include a valid hostname.")
 
         allowed: list[str] = SafeFetch.validate_domain_list(allowed_domains, "allowed_domains")
         if allowed and not SafeFetch._hostname_matches_any(hostname, allowed):

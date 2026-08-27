@@ -14,6 +14,10 @@
 #
 # END COPYRIGHT
 
+# This is the consolidated one-class test module for SafeFetch (one file per module,
+# per the repo convention), so it legitimately exceeds pylint's default line limit.
+# pylint: disable=too-many-lines
+
 import asyncio
 from io import BytesIO
 from unittest import TestCase
@@ -23,8 +27,10 @@ from unittest.mock import patch
 
 from aiohttp import ClientError
 from aiohttp import ClientResponseError
+from aiohttp import TCPConnector
 from pypdf import PdfWriter
 
+from neuro_san_studio.coded_tools.utils.global_only_resolver import GlobalOnlyResolver
 from neuro_san_studio.coded_tools.utils.safe_fetch import MAX_RESPONSE_BYTES
 from neuro_san_studio.coded_tools.utils.safe_fetch import MAX_URL_LENGTH
 from neuro_san_studio.coded_tools.utils.safe_fetch import SafeFetch
@@ -167,6 +173,28 @@ class TestSafeFetch(TestCase):  # pylint: disable=too-many-public-methods
     time by GlobalOnlyResolver (see test_global_only_resolver.py). Network-facing
     methods are exercised with mocked aiohttp sessions built by the helpers above.
     """
+
+    def test_open_session_wires_ssrf_connector(self):
+        """Tests that open_session builds a session whose connector enforces the SSRF policy.
+
+        Guards the central guarantee: the connector must use GlobalOnlyResolver (anti
+        DNS-rebinding) with the DNS cache disabled, so swapping it for a default
+        connector cannot silently drop the protection while the rest of the suite,
+        which only uses mocked sessions, still passes.
+        """
+
+        async def check():
+            session = SafeFetch.open_session()
+            try:
+                connector = session.connector
+                self.assertIsInstance(connector, TCPConnector)
+                # Private attributes are the only offline way to assert the wiring.
+                self.assertIsInstance(connector._resolver, GlobalOnlyResolver)  # pylint: disable=protected-access
+                self.assertFalse(connector._use_dns_cache)  # pylint: disable=protected-access
+            finally:
+                await session.close()
+
+        asyncio.run(check())
 
     def _call_validate_url(self, args):
         """Invoke validate_url with the given args dict and return the result."""
@@ -366,6 +394,19 @@ class TestSafeFetch(TestCase):  # pylint: disable=too-many-public-methods
         with self.assertRaises(ValueError) as ctx:
             self._call_validate_url({"url": "https://faß.de/x", "blocked_domains": ["xn--fa-hia.de"]})
         self.assertIn("url_not_allowed", str(ctx.exception))
+
+    def test_validate_url_root_only_host_rejected(self):
+        """Tests that a root-only authority canonicalizing to an empty host is rejected.
+
+        'http://./' and 'http://../' have a non-empty parsed.hostname that reduces to
+        '' after IDNA encoding and trailing-dot stripping; they must raise
+        invalid_input rather than be returned as valid and reach DNS.
+        """
+        for url in ("http://./", "http://../"):
+            with self.subTest(url=url):
+                with self.assertRaises(ValueError) as ctx:
+                    self._call_validate_url({"url": url})
+                self.assertIn("invalid_input", str(ctx.exception))
 
     def _call_validate_hostname_safety(self, hostname: str) -> None:
         """Invoke validate_hostname_safety with the given hostname."""

@@ -50,3 +50,6 @@ http://x/
 https://example\.com\.
 https://xn--mnchen-3ya\.de
 https://xn--fa-hia\.de
+# Root-only authorities used by the empty-canonical-host test (dots escaped).
+http://\./
+http://\.\./
