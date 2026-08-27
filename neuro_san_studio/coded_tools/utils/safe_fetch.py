@@ -418,7 +418,7 @@ class SafeFetch:
     @staticmethod
     async def fetch_raw(url: str, session: ClientSession) -> str:
         """
-        Fetch a URL via aiohttp GET and return its raw (undecoded-to-text) body.
+        Fetch a URL via aiohttp GET and return its decoded body (not HTML-stripped).
 
         The body is streamed with the same running MAX_RESPONSE_BYTES cap as
         download_pdf_bytes (in addition to the Content-Length pre-check), so a server
@@ -486,7 +486,17 @@ class SafeFetch:
         """
         body: bytes = await SafeFetch._read_capped_body(response, url)
         encoding: str = response.charset or "utf-8"
-        return body.decode(encoding, errors="replace")
+        try:
+            return body.decode(encoding, errors="replace")
+        except LookupError:
+            # A malformed Content-Type can name a codec Python does not know.
+            # bytes.decode() then raises LookupError at codec lookup, before
+            # errors="replace" can take effect (that only covers decode errors
+            # for a valid codec). LookupError is neither ClientError nor
+            # AsyncTimeoutError, so it would escape the fetch methods'
+            # translation and break their url_not_accessible contract. Fall back
+            # to utf-8 so a bad charset token never leaks past this boundary.
+            return body.decode("utf-8", errors="replace")
 
     @staticmethod
     async def fetch_text(url: str, session: ClientSession) -> str:

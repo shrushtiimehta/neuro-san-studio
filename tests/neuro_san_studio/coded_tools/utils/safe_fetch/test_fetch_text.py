@@ -112,3 +112,32 @@ class TestFetchText(TestCase):
             asyncio.run(SafeFetch.fetch_text("http://169.254.169.254/latest/meta-data/", session))
         self.assertIn("url_not_allowed", str(ctx.exception))
         session.get.assert_not_called()
+
+    def test_invalid_charset_falls_back_to_utf8(self):
+        """Tests that a malformed Content-Type charset never escapes as an untranslated LookupError.
+
+        A server may declare a codec Python does not know; bytes.decode() then raises
+        LookupError at codec lookup, before errors="replace" can apply. That error is
+        neither ClientError nor a timeout, so it would bypass the fetch methods'
+        translation and break their url_not_accessible contract. The decode must fall
+        back to utf-8 and return the body instead of raising.
+        """
+        response = MagicMock()
+        response.status = 200
+        response.headers = {"Content-Type": "text/plain; charset=not-a-real-codec"}
+        response.charset = "not-a-real-codec"
+        response.raise_for_status = MagicMock()
+
+        async def iter_chunked(_chunk_size):
+            # Valid utf-8 bytes; only the declared charset token is bogus.
+            yield "héllo".encode("utf-8")
+
+        response.content.iter_chunked = iter_chunked
+        response_cm = MagicMock()
+        response_cm.__aenter__ = AsyncMock(return_value=response)
+        response_cm.__aexit__ = AsyncMock(return_value=False)
+        session = MagicMock()
+        session.get = MagicMock(return_value=response_cm)
+
+        result = asyncio.run(SafeFetch.fetch_text("http://example.com", session))
+        self.assertEqual(result, "héllo")

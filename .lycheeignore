@@ -4,6 +4,8 @@ http://127.0.0.1
 
 # Private network addresses
 http://192.168.
+# Cloud metadata endpoint used as an SSRF test fixture (link-local, not browsable)
+http://169.254.169.254
 
 # Placeholder and example URLs
 https://github.com/your-username/
