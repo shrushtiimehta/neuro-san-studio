@@ -29,6 +29,7 @@ from aiohttp import ClientResponseError
 from aiohttp import ClientSession
 from aiohttp import ClientTimeout
 from aiohttp import TCPConnector
+from aiohttp.helpers import is_ip_address
 from bs4 import BeautifulSoup
 
 from neuro_san_studio.coded_tools.global_only_resolver import GlobalOnlyResolver
@@ -52,12 +53,16 @@ class SafeFetch:
     Localhost names and IP literals are rejected up front (validate_hostname_safety);
     other hostnames are validated at connection time by GlobalOnlyResolver, which
     requires every DNS record to be globally routable and closes the DNS-rebinding
-    gap. All requests, including PDF downloads, must go through a session created by
-    open_session so they inherit that policy.
+    gap. Every network method (get_content_type, fetch_raw, download_pdf_bytes, and
+    the fetch_text/fetch_pdf_text wrappers built on them) re-validates the URL at
+    entry, so the SSRF policy holds even for a caller that skipped validate_url; all
+    requests must still go through a session created by open_session to inherit the
+    connection-time resolver check.
     Redirects are not followed; a 3xx response raises url_not_allowed.
-    The byte cap (MAX_RESPONSE_BYTES) is enforced via the Content-Length header for
-    text fetches (a server that lies about or omits Content-Length can still deliver
-    an arbitrarily large body) and on the actual streamed bytes for PDF downloads.
+    The byte cap (MAX_RESPONSE_BYTES) is enforced both via the Content-Length header
+    (pre-check) and on the actual streamed bytes, for text fetches and PDF downloads
+    alike, so a server that lies about or omits Content-Length cannot deliver an
+    oversized body.
 
     Error types (raised as ValueError or aiohttp.ClientResponseError or aiohttp.ClientError with the specified message)
         invalid_input            – URL is missing, not a valid http/https URL, or a parameter has an invalid type.
@@ -140,7 +145,10 @@ class SafeFetch:
         validated like any other literal; strings that ip_address() cannot parse but
         that contain characters illegal in DNS hostnames ('%' or ':') are rejected
         outright, because aiohttp's own literal detection may still treat them as IP
-        literals and bypass the resolver.
+        literals and bypass the resolver. For the same reason, a host that aiohttp's
+        is_ip_address() accepts but ipaddress.ip_address() cannot parse (e.g. the
+        integer form "2130706433" or shorthand "127.1", which resolve to loopback)
+        is rejected rather than deferred to a resolver that will never run for it.
         """
         if hostname == "localhost" or hostname.endswith(".localhost"):
             raise ValueError(f"url_not_allowed: Host '{hostname}' targets a loopback address.")
@@ -157,6 +165,19 @@ class SafeFetch:
                 # so anything ip_address() cannot vouch for must not pass.
                 raise ValueError(
                     f"url_not_allowed: Host '{hostname}' is not a valid hostname or IP address."
+                ) from parse_exc
+            if is_ip_address(hostname):
+                # ip_address() could not parse this, but aiohttp's own literal
+                # detection (the exact is_ip_address() check TCPConnector uses to
+                # decide whether to skip the resolver) does treat it as an IP
+                # literal — e.g. the 32-bit integer form "2130706433" or
+                # dotted-shorthand "127.1", both of which the OS resolves to
+                # 127.0.0.1. aiohttp will connect to it without ever calling
+                # GlobalOnlyResolver, and ip_address() cannot vouch that it is
+                # globally routable, so fail closed instead of deferring to a
+                # resolver that will never run for it.
+                raise ValueError(
+                    f"url_not_allowed: Host '{hostname}' is an unsupported IP-literal form."
                 ) from parse_exc
             # A genuine hostname; GlobalOnlyResolver validates its DNS records at
             # connection time.
@@ -211,6 +232,11 @@ class SafeFetch:
         and ClientError with a url_not_accessible prefix on connection/DNS/timeout failures.
         Raises ValueError with a response_too_large prefix when Content-Length exceeds MAX_RESPONSE_BYTES.
         """
+        # Re-validate at the network boundary so the SSRF policy holds even if a
+        # caller reached this method without calling validate_url first. Validation
+        # is pure and idempotent, so the redundant call on WebFetch's
+        # already-validated URL is harmless.
+        url = SafeFetch.validate_url(url)
         try:
             async with session.head(url, allow_redirects=False) as head:
                 SafeFetch.raise_if_redirect(head, url)
@@ -284,6 +310,8 @@ class SafeFetch:
         on non-2xx, and ClientError with a url_not_accessible prefix on
         connection/DNS/timeout failures.
         """
+        # Re-validate at the network boundary (see get_content_type).
+        url = SafeFetch.validate_url(url)
         try:
             async with session.get(url, allow_redirects=False) as response:
                 SafeFetch.raise_if_redirect(response, url)
@@ -316,11 +344,18 @@ class SafeFetch:
     async def fetch_raw(url: str, session: ClientSession) -> str:
         """Fetch a URL via aiohttp GET and return its raw body text.
 
+        The body is streamed with the same running MAX_RESPONSE_BYTES cap as
+        download_pdf_bytes (in addition to the Content-Length pre-check), so a
+        server that lies about or omits Content-Length cannot deliver an oversized
+        body to a direct caller that skipped the HEAD probe in get_content_type.
         Redirects are not followed; a 3xx response raises ValueError with url_not_allowed.
         Raises ClientResponseError with a url_not_accessible / too_many_requests prefix
         on non-2xx, and ClientError with a url_not_accessible prefix on
         connection/DNS/timeout failures.
+        Raises ValueError with a response_too_large prefix when the body exceeds MAX_RESPONSE_BYTES.
         """
+        # Re-validate at the network boundary (see get_content_type).
+        url = SafeFetch.validate_url(url)
         try:
             async with session.get(url, allow_redirects=False) as response:
                 # raise_for_status() only covers 4xx/5xx; 3xx passes through silently
@@ -328,7 +363,23 @@ class SafeFetch:
                 # that behaves differently on GET vs an earlier HEAD probe is still caught.
                 SafeFetch.raise_if_redirect(response, url)
                 response.raise_for_status()
-                return await response.text()
+                SafeFetch.check_content_length(response.headers.get("Content-Length"), url)
+
+                chunks: list[bytes] = []
+                received: int = 0
+                async for chunk in response.content.iter_chunked(DOWNLOAD_CHUNK_BYTES):
+                    received += len(chunk)
+                    if received > MAX_RESPONSE_BYTES:
+                        raise ValueError(
+                            f"response_too_large: '{url}' body exceeds the {MAX_RESPONSE_BYTES}-byte limit."
+                        )
+                    chunks.append(chunk)
+                # Decode once, after the full (capped) body is in hand, so multibyte
+                # sequences spanning chunk boundaries are never split. aiohttp's
+                # response.charset comes from the Content-Type header; fall back to
+                # utf-8 and replace undecodable bytes rather than raise.
+                encoding: str = response.charset or "utf-8"
+                return b"".join(chunks).decode(encoding, errors="replace")
         except ClientResponseError as exc:
             prefix: str = "too_many_requests" if exc.status == HTTPStatus.TOO_MANY_REQUESTS else "url_not_accessible"
             raise ClientResponseError(

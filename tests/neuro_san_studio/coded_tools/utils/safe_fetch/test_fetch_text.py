@@ -18,6 +18,7 @@ import asyncio
 from unittest import TestCase
 from unittest.mock import AsyncMock
 from unittest.mock import MagicMock
+from unittest.mock import patch
 
 from aiohttp import ClientError
 from aiohttp import ClientResponseError
@@ -25,6 +26,8 @@ from aiohttp import ClientResponseError
 from neuro_san_studio.coded_tools.utils.safe_fetch import SafeFetch
 from tests.neuro_san_studio.coded_tools.utils.safe_fetch.helpers import make_get_response
 from tests.neuro_san_studio.coded_tools.utils.safe_fetch.helpers import make_response_error
+
+MODULE = "neuro_san_studio.coded_tools.utils.safe_fetch"
 
 
 class TestFetchText(TestCase):
@@ -84,3 +87,28 @@ class TestFetchText(TestCase):
         with self.assertRaises(ClientError) as ctx:
             asyncio.run(SafeFetch.fetch_text("http://example.com", session))
         self.assertIn("url_not_accessible", str(ctx.exception))
+
+    def test_body_over_limit_raises_response_too_large(self):
+        """Tests that a text body exceeding MAX_RESPONSE_BYTES raises response_too_large.
+
+        Guards the text path's own streamed size cap, independent of the HEAD probe
+        in get_content_type — the gap a direct fetch_text caller would otherwise hit.
+        """
+        session, _ = make_get_response(body="x" * 50)
+        with patch(f"{MODULE}.MAX_RESPONSE_BYTES", 10):
+            with self.assertRaises(ValueError) as ctx:
+                asyncio.run(SafeFetch.fetch_text("http://example.com", session))
+        self.assertIn("response_too_large", str(ctx.exception))
+
+    def test_private_ip_url_rejected_without_network(self):
+        """Tests that fetch_text validates the URL itself, blocking SSRF even without a prior validate_url call.
+
+        The session's get is a MagicMock that would 'succeed' if reached; the raised
+        url_not_allowed confirms validation happens at the fetch boundary.
+        """
+        session = MagicMock()
+        session.get = MagicMock()
+        with self.assertRaises(ValueError) as ctx:
+            asyncio.run(SafeFetch.fetch_text("http://169.254.169.254/latest/meta-data/", session))
+        self.assertIn("url_not_allowed", str(ctx.exception))
+        session.get.assert_not_called()

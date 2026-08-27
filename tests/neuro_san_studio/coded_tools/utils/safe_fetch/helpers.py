@@ -109,13 +109,22 @@ def make_get_response(
     charset: str = "utf-8",
     raise_for_status_exc: Exception | None = None,
 ) -> tuple[MagicMock, MagicMock]:
-    """Return (mock_session, mock_get_response) for GET-only tests (_fetch_text)."""
+    """Return (mock_session, mock_get_response) for GET-only tests (fetch_raw/fetch_text)."""
     response = MagicMock()
     response.status = status
     response.headers = {"Content-Type": content_type}
     response.charset = charset
     response.raise_for_status = MagicMock(side_effect=raise_for_status_exc if raise_for_status_exc else None)
     response.text = AsyncMock(return_value=body)
+
+    # fetch_raw streams the body via response.content.iter_chunked and decodes it
+    # with response.charset, so provide the body as a single encoded chunk.
+    body_bytes = body.encode(charset)
+
+    async def iter_chunked(_chunk_size: int):
+        yield body_bytes
+
+    response.content.iter_chunked = iter_chunked
 
     response_cm = MagicMock()
     response_cm.__aenter__ = AsyncMock(return_value=response)

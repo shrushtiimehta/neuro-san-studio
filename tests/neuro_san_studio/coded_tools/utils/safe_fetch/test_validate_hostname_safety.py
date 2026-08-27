@@ -71,6 +71,20 @@ class TestValidateHostnameSafety(TestCase):
             self._call("169.254.169.254")  # AWS metadata endpoint
         self.assertIn("url_not_allowed", str(ctx.exception))
 
+    def test_integer_and_shorthand_ipv4_literals_blocked(self):
+        """Tests that IPv4 forms aiohttp treats as literals but ip_address() rejects are blocked.
+
+        The 32-bit integer form '2130706433' and dotted-shorthand '127.1' both
+        resolve to 127.0.0.1 and are treated as IP literals by aiohttp, so aiohttp
+        skips GlobalOnlyResolver for them; validate_hostname_safety must reject them
+        up front rather than defer to a resolver that never runs.
+        """
+        for host in ("2130706433", "127.1", "0177.0.0.1"):
+            with self.subTest(host=host):
+                with self.assertRaises(ValueError) as ctx:
+                    self._call(host)
+                self.assertIn("url_not_allowed", str(ctx.exception))
+
     def test_ipv6_loopback_blocked(self):
         """Tests that the IPv6 loopback address ::1 is blocked with url_not_allowed."""
         with self.assertRaises(ValueError) as ctx:
