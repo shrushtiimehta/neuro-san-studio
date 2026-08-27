@@ -352,8 +352,11 @@ class TestSafeFetch(TestCase):  # pylint: disable=too-many-public-methods
 
     def test_validate_url_invalid_port_rejected(self):
         """Tests that a non-numeric port raises invalid_input rather than failing later in aiohttp."""
+        # Assembled from parts so the CI link checker (lychee) does not extract and
+        # fail to parse this deliberately-invalid port.
+        bad_port_url = "https://example.com" + ":not-a-port/x"
         with self.assertRaises(ValueError) as ctx:
-            self._call_validate_url({"url": "https://example.com:not-a-port/x"})
+            self._call_validate_url({"url": bad_port_url})
         self.assertIn("invalid_input", str(ctx.exception))
 
     def test_validate_url_unmatched_ipv6_bracket_rejected(self):

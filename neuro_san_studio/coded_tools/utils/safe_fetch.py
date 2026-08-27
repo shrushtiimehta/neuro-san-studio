@@ -139,9 +139,9 @@ class SafeFetch:
         if not raw_hostname:
             raise ValueError("invalid_input: URL must include a hostname.")
 
-        # urlparse defers port validation until parsed.port is accessed, so a bad
-        # port ("https://host:not-a-port" or out of range) would otherwise slip
-        # through and fail later inside aiohttp with an untranslated ValueError.
+        # urlparse defers port validation until parsed.port is accessed, so a
+        # non-numeric or out-of-range port would otherwise slip through and fail
+        # later inside aiohttp with an untranslated ValueError.
         try:
             _ = parsed.port
         except ValueError as exc:
