@@ -25,7 +25,6 @@ from typing import NoReturn
 from urllib.parse import ParseResult
 from urllib.parse import urlparse
 
-import idna
 from aiohttp import ClientError
 from aiohttp import ClientResponseError
 from aiohttp import ClientSession
@@ -143,14 +142,17 @@ class SafeFetch:
         except ValueError as exc:
             raise ValueError(f"invalid_input: URL has an invalid port: {exc}") from exc
 
-        # Use parsed.hostname (strips port/credentials) and enforce a strict domain
-        # boundary via _hostname_matches_any (see that helper).
-        hostname: str = raw_hostname.lower()
-        # A trailing dot marks a fully-qualified name that resolves to the same host
-        # ("example.com." == "example.com"). Strip it before the domain and
-        # hostname-safety checks so allow/block rules and the loopback guard cannot
-        # be bypassed with DNS-equivalent spelling (e.g. a blocked "example.com"
-        # evaded via "example.com.", or "localhost." dodging the loopback check).
+        # Canonicalize the host the same way aiohttp/yarl will before connecting, so
+        # every domain and safety check runs on the exact form the request targets.
+        # parsed.hostname strips the port/credentials; _to_ascii_host applies IDNA
+        # (Unicode IDN -> punycode) and maps Unicode dot separators (U+3002 and
+        # friends) to ASCII '.'.
+        hostname: str = SafeFetch._to_ascii_host(raw_hostname.lower())
+        # Strip the DNS root-label dot only AFTER IDNA encoding: a Unicode trailing
+        # dot becomes a strippable ASCII '.' during encoding. Doing this before the
+        # domain and hostname-safety checks stops DNS-equivalent spellings
+        # ("example.com.", "example.com。", "localhost。") from bypassing the block
+        # list or the loopback guard.
         hostname = hostname.rstrip(".")
 
         allowed: list[str] = SafeFetch.validate_domain_list(allowed_domains, "allowed_domains")
@@ -174,18 +176,18 @@ class SafeFetch:
         subdomain "sub.example.com", but not "badexample.com". Matching is
         case-insensitive.
 
-        :param hostname: The already-lower-cased host to test.
+        :param hostname: The host to test, already canonicalized by validate_url
+                (lower-cased, IDNA-ASCII, root-label dot stripped).
         :param domains: The domain entries to test against.
         :return: True if the hostname equals or is a subdomain of any entry.
         """
-        # Compare in IDNA-ASCII form: aiohttp/yarl connect to the punycode form of a
-        # Unicode host, so a Unicode IDN spelling and its punycode domain entry (or
-        # vice versa) must be matched in the same form or a configured block/allow
-        # rule is bypassed.
-        canonical_host: str = SafeFetch._to_ascii_host(hostname)
+        # Canonicalize each entry the same way the host was (IDNA-ASCII + trailing
+        # dot stripped) so both sides compare in the form aiohttp connects to; a
+        # Unicode IDN spelling and its punycode entry (or a "example.com." FQDN
+        # entry) would otherwise miss and bypass the configured block/allow rule.
         for domain in domains:
-            lowered: str = SafeFetch._to_ascii_host(domain.lower())
-            if canonical_host == lowered or canonical_host.endswith("." + lowered):
+            lowered: str = SafeFetch._to_ascii_host(domain.lower()).rstrip(".")
+            if hostname == lowered or hostname.endswith("." + lowered):
                 return True
         return False
 
@@ -195,17 +197,18 @@ class SafeFetch:
         Return the IDNA (punycode) ASCII form of a host for domain-policy matching.
 
         aiohttp/yarl connect to the IDNA-ASCII form of a Unicode host, so domain
-        allow/block rules must compare in that same form. Falls back to the input
-        unchanged when it is not a valid IDN (IP literals, underscore labels, empty
-        strings), which leaves ASCII inputs exactly as the raw comparison saw them
-        and defers those cases to the other checks.
+        allow/block rules must compare in that same form. Uses the standard-library
+        "idna" codec (no third-party dependency). Falls back to the input unchanged
+        when it cannot be encoded (IP literals, over-long or invalid labels), which
+        leaves ASCII inputs exactly as the raw comparison saw them and defers those
+        cases to the other checks.
 
         :param host: The already-lower-cased host or domain entry to canonicalize.
         :return: The IDNA-ASCII form, or the input unchanged if it cannot be encoded.
         """
         try:
-            return idna.encode(host, uts46=True).decode("ascii")
-        except (idna.IDNAError, UnicodeError):
+            return host.encode("idna").decode("ascii")
+        except UnicodeError:
             return host
 
     @staticmethod
@@ -332,8 +335,12 @@ class SafeFetch:
         :return: True for text/* and (x)html/xml types; False for PDF, binary, or
                  anything else.
         """
-        lowered: str = content_type.lower()
-        return lowered.startswith("text/") or "html" in lowered or "xml" in lowered
+        # Match only the base media type, not the parameters: a header such as
+        # 'application/pdf; profile="text/html"' is a PDF, and scanning the whole
+        # value would misread it as text and stream the body here only for WebFetch
+        # to download it again as a PDF.
+        base_type: str = content_type.split(";", 1)[0].strip().lower()
+        return base_type.startswith("text/") or "html" in base_type or "xml" in base_type
 
     @staticmethod
     async def get_content_type(url: str, session: ClientSession) -> tuple[str, str | None]:

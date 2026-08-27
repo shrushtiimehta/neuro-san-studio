@@ -334,6 +334,28 @@ class TestSafeFetch(TestCase):  # pylint: disable=too-many-public-methods
             self._call_validate_url({"url": "https://[::1/x"})
         self.assertIn("invalid_input", str(ctx.exception))
 
+    def test_validate_url_unicode_dot_separator_host_still_blocked(self):
+        """Tests that a Unicode dot separator (U+3002) cannot bypass a block-list entry.
+
+        IDNA encoding maps 'example.com。' to the trailing-dot form of 'example.com',
+        so it must be blocked by blocked_domains=['example.com'].
+        """
+        with self.assertRaises(ValueError) as ctx:
+            self._call_validate_url({"url": "https://example.com。/x", "blocked_domains": ["example.com"]})
+        self.assertIn("url_not_allowed", str(ctx.exception))
+
+    def test_validate_url_unicode_dot_separator_localhost_blocked(self):
+        """Tests that 'localhost。' (U+3002) cannot dodge the loopback guard."""
+        with self.assertRaises(ValueError) as ctx:
+            self._call_validate_url({"url": "http://localhost。/"})
+        self.assertIn("url_not_allowed", str(ctx.exception))
+
+    def test_validate_url_trailing_dot_block_entry_matches_bare_host(self):
+        """Tests that a fully-qualified block-list entry ('example.com.') blocks the bare host."""
+        with self.assertRaises(ValueError) as ctx:
+            self._call_validate_url({"url": "https://example.com/x", "blocked_domains": ["example.com."]})
+        self.assertIn("url_not_allowed", str(ctx.exception))
+
     def _call_validate_hostname_safety(self, hostname: str) -> None:
         """Invoke validate_hostname_safety with the given hostname."""
         SafeFetch.validate_hostname_safety(hostname)
@@ -571,6 +593,32 @@ class TestSafeFetch(TestCase):  # pylint: disable=too-many-public-methods
         self.assertEqual(content_type, "image/png")
         self.assertIsNone(body)
         get_response.text.assert_not_awaited()
+
+    def test_get_content_type_405_pdf_with_text_param_not_prefetched(self):
+        """Tests that only the base media type drives the text prefetch, not the parameters.
+
+        'application/pdf; profile="text/html"' is a PDF; scanning the whole header
+        would misread it as text and stream the body here only for it to be
+        downloaded again as a PDF, so no body must be prefetched.
+        """
+        session, _ = make_head_session(status=405)
+        get_response = MagicMock()
+        get_response.status = 200
+        get_response.headers = {"Content-Type": 'application/pdf; profile="text/html"'}
+        get_response.raise_for_status = MagicMock()
+
+        async def iter_chunked(_chunk_size):
+            yield b"should-not-be-read"
+
+        get_response.content.iter_chunked = iter_chunked
+        get_cm = MagicMock()
+        get_cm.__aenter__ = AsyncMock(return_value=get_response)
+        get_cm.__aexit__ = AsyncMock(return_value=False)
+        session.get = MagicMock(return_value=get_cm)
+
+        content_type, body = asyncio.run(SafeFetch.get_content_type("http://example.com", session))
+        self.assertEqual(content_type, 'application/pdf; profile="text/html"')
+        self.assertIsNone(body)
 
     def test_get_content_type_head_405_text_body_over_limit_raises(self):
         """Tests that the 405 text prefetch enforces the streamed byte cap, not just Content-Length.

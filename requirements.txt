@@ -18,9 +18,6 @@ aiofiles>=24.1.0
 # For asynchronous HTTP requests
 aiohttp>=3.13.0,<4.0
 
-# For IDNA (punycode) hostname canonicalization in SafeFetch domain-policy checks
-idna>=3.0
-
 # For HTML parsing
 beautifulsoup4>=4.12.0
 
