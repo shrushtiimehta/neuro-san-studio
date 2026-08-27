@@ -285,6 +285,27 @@ class TestSafeFetch(TestCase):  # pylint: disable=too-many-public-methods
             self._call_validate_url({"url": "https://test-blocked.com/x", "blocked_domains": ["test-blocked.com"]})
         self.assertIn("Domain 'test-blocked.com' is blocked", str(ctx.exception))
 
+    def test_validate_url_trailing_dot_host_still_blocked(self):
+        """Tests that a trailing-dot FQDN cannot bypass a block-list entry.
+
+        'example.com.' is DNS-equivalent to 'example.com'; without canonicalizing
+        the hostname it would evade blocked_domains=['example.com'].
+        """
+        with self.assertRaises(ValueError) as ctx:
+            self._call_validate_url({"url": "https://example.com./x", "blocked_domains": ["example.com"]})
+        self.assertIn("url_not_allowed", str(ctx.exception))
+
+    def test_validate_url_trailing_dot_host_matches_allowed(self):
+        """Tests that a trailing-dot FQDN still matches an allowed_domains entry."""
+        url = self._call_validate_url({"url": "https://example.com./data", "allowed_domains": ["example.com"]})
+        self.assertEqual(url, "https://example.com./data")
+
+    def test_validate_url_trailing_dot_localhost_blocked(self):
+        """Tests that 'localhost.' cannot dodge the loopback guard via a trailing dot."""
+        with self.assertRaises(ValueError) as ctx:
+            self._call_validate_url({"url": "http://localhost./"})
+        self.assertIn("url_not_allowed", str(ctx.exception))
+
     def _call_validate_hostname_safety(self, hostname: str) -> None:
         """Invoke validate_hostname_safety with the given hostname."""
         SafeFetch.validate_hostname_safety(hostname)

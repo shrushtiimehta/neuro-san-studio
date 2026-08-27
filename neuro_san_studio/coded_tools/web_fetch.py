@@ -52,7 +52,7 @@ class WebFetch(CodedTool):
         url_not_accessible       – HTTP error or network failure while fetching the page.
         too_many_requests        – Server returned HTTP 429.
         unsupported_content_type – Content type is not text/HTML or PDF.
-        response_too_large       – Content-Length header or streamed PDF body exceeds the SafeFetch byte limit.
+        response_too_large       – Content-Length header or streamed body (text or PDF) exceeds the byte limit.
     """
 
     async def async_invoke(self, args: dict[str, Any], sly_data: dict[str, Any]) -> dict[str, Any]:
@@ -142,6 +142,11 @@ class WebFetch(CodedTool):
     def _validate_max_content_chars(args: dict[str, Any]) -> int:
         """
         Validate the optional max_content_chars argument and return its value.
+
+        A present value must be a positive integer. 0 and negative values are
+        rejected rather than silently falling back to MAX_CHARS: this is a
+        deliberate change from an earlier revision, so a nonsensical cap surfaces
+        as invalid_input instead of an unexpectedly huge default.
 
         :param args: The tool argument dictionary; "max_content_chars" is optional.
         :return: The validated positive-integer character cap, defaulting to MAX_CHARS

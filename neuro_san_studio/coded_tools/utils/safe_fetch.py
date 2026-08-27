@@ -130,6 +130,12 @@ class SafeFetch:
         # Use parsed.hostname (strips port/credentials) and enforce a strict domain
         # boundary via _hostname_matches_any (see that helper).
         hostname: str = raw_hostname.lower()
+        # A trailing dot marks a fully-qualified name that resolves to the same host
+        # ("example.com." == "example.com"). Strip it before the domain and
+        # hostname-safety checks so allow/block rules and the loopback guard cannot
+        # be bypassed with DNS-equivalent spelling (e.g. a blocked "example.com"
+        # evaded via "example.com.", or "localhost." dodging the loopback check).
+        hostname = hostname.rstrip(".")
 
         allowed: list[str] = SafeFetch.validate_domain_list(allowed_domains, "allowed_domains")
         if allowed and not SafeFetch._hostname_matches_any(hostname, allowed):
