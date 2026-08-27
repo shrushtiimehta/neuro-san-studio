@@ -33,7 +33,7 @@ from aiohttp import TCPConnector
 from aiohttp.helpers import is_ip_address
 from bs4 import BeautifulSoup
 
-from neuro_san_studio.coded_tools.global_only_resolver import GlobalOnlyResolver
+from neuro_san_studio.coded_tools.utils.global_only_resolver import GlobalOnlyResolver
 from neuro_san_studio.coded_tools.utils.pdf_utils import PdfUtils
 
 MAX_URL_LENGTH: int = 250
