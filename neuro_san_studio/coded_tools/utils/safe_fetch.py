@@ -98,7 +98,33 @@ class SafeFetch:
         """
         timeout = ClientTimeout(total=TIMEOUT_SECONDS)
         connector = TCPConnector(resolver=GlobalOnlyResolver(), use_dns_cache=False)
-        return ClientSession(timeout=timeout, connector=connector)
+        session: ClientSession = ClientSession(timeout=timeout, connector=connector)
+        # Mark the session so the network methods can reject a caller-supplied default
+        # session, which would skip GlobalOnlyResolver and reopen the SSRF hole.
+        # open_session is the only sanctioned constructor and always wires the
+        # protected connector above, so the marker reliably implies the resolver is
+        # present (see _require_protected_session and the open_session wiring test).
+        session._safe_fetch_protected = True  # pylint: disable=protected-access
+        return session
+
+    @staticmethod
+    def _require_protected_session(session: ClientSession) -> None:
+        """
+        Reject a session that was not created by open_session.
+
+        SafeFetch's SSRF protection lives entirely in the connector open_session wires
+        (GlobalOnlyResolver + no DNS cache); validate_url deliberately defers ordinary
+        hostname resolution to that resolver. A caller passing a default ClientSession
+        would skip the check and could reach a private address via a hostname that
+        resolves to it, so every network method refuses an unmarked session up front.
+
+        :param session: The session handed to a network method.
+        :raises ValueError: when the session was not built by SafeFetch.open_session.
+        """
+        # getattr default is False for a real default session; a marked session
+        # (and, harmlessly, a test mock) reports truthy.
+        if not getattr(session, "_safe_fetch_protected", False):
+            raise ValueError("SafeFetch network methods require a session created by SafeFetch.open_session().")
 
     @staticmethod
     def validate_url(url_value: Any, allowed_domains: Any = None, blocked_domains: Any = None) -> str:
@@ -384,6 +410,9 @@ class SafeFetch:
         :raises aiohttp.ClientResponseError: url_not_accessible / too_many_requests on a non-2xx response.
         :raises aiohttp.ClientError: url_not_accessible on a connection/DNS/timeout failure.
         """
+        # Refuse a session that did not come from open_session, so the SSRF resolver
+        # cannot be bypassed by a caller passing a default aiohttp session.
+        SafeFetch._require_protected_session(session)
         # Re-validate at the network boundary so the SSRF policy holds even if a
         # caller reached this method without calling validate_url first. Validation
         # is pure and idempotent, so the redundant call on WebFetch's
@@ -479,6 +508,7 @@ class SafeFetch:
         :raises aiohttp.ClientResponseError: url_not_accessible / too_many_requests on a non-2xx response.
         :raises aiohttp.ClientError: url_not_accessible on a connection/DNS/timeout failure.
         """
+        SafeFetch._require_protected_session(session)
         # Re-validate at the network boundary (see get_content_type).
         url = SafeFetch.validate_url(url)
         try:
@@ -511,6 +541,7 @@ class SafeFetch:
         :raises aiohttp.ClientResponseError: url_not_accessible / too_many_requests on a non-2xx response.
         :raises aiohttp.ClientError: url_not_accessible on a connection/DNS/timeout failure.
         """
+        SafeFetch._require_protected_session(session)
         # Re-validate at the network boundary (see get_content_type).
         url = SafeFetch.validate_url(url)
         try:

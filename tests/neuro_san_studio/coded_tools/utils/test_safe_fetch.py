@@ -27,6 +27,7 @@ from unittest.mock import patch
 
 from aiohttp import ClientError
 from aiohttp import ClientResponseError
+from aiohttp import ClientSession
 from aiohttp import TCPConnector
 from pypdf import PdfWriter
 
@@ -191,6 +192,29 @@ class TestSafeFetch(TestCase):  # pylint: disable=too-many-public-methods
                 # Private attributes are the only offline way to assert the wiring.
                 self.assertIsInstance(connector._resolver, GlobalOnlyResolver)  # pylint: disable=protected-access
                 self.assertFalse(connector._use_dns_cache)  # pylint: disable=protected-access
+            finally:
+                await session.close()
+
+        asyncio.run(check())
+
+    def test_network_methods_reject_unprotected_session(self):
+        """Tests that network methods refuse a session not created by open_session.
+
+        A default ClientSession has no GlobalOnlyResolver, so accepting it would let a
+        hostname resolve to a private address and reopen the SSRF hole. Each method
+        must reject the unmarked session up front, before any request.
+        """
+
+        async def check():
+            session = ClientSession()
+            try:
+                with self.assertRaises(ValueError) as ctx:
+                    await SafeFetch.get_content_type("http://example.com", session)
+                self.assertIn("open_session", str(ctx.exception))
+                with self.assertRaises(ValueError):
+                    await SafeFetch.fetch_raw("http://example.com", session)
+                with self.assertRaises(ValueError):
+                    await SafeFetch.download_pdf_bytes("http://example.com", session)
             finally:
                 await session.close()
 
