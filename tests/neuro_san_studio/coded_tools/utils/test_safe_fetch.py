@@ -306,6 +306,34 @@ class TestSafeFetch(TestCase):  # pylint: disable=too-many-public-methods
             self._call_validate_url({"url": "http://localhost./"})
         self.assertIn("url_not_allowed", str(ctx.exception))
 
+    def test_validate_url_idn_unicode_host_matches_punycode_block(self):
+        """Tests that a Unicode IDN host is blocked by its punycode blocked_domains entry.
+
+        aiohttp connects to the IDNA-ASCII form, so 'münchen.de' must match a
+        blocked 'xn--mnchen-3ya.de' or the block is bypassed by spelling.
+        """
+        with self.assertRaises(ValueError) as ctx:
+            self._call_validate_url({"url": "https://münchen.de/x", "blocked_domains": ["xn--mnchen-3ya.de"]})
+        self.assertIn("url_not_allowed", str(ctx.exception))
+
+    def test_validate_url_idn_punycode_host_matches_unicode_block(self):
+        """Tests the inverse spelling: a punycode host is blocked by a Unicode blocked_domains entry."""
+        with self.assertRaises(ValueError) as ctx:
+            self._call_validate_url({"url": "https://xn--mnchen-3ya.de/x", "blocked_domains": ["münchen.de"]})
+        self.assertIn("url_not_allowed", str(ctx.exception))
+
+    def test_validate_url_invalid_port_rejected(self):
+        """Tests that a non-numeric port raises invalid_input rather than failing later in aiohttp."""
+        with self.assertRaises(ValueError) as ctx:
+            self._call_validate_url({"url": "https://example.com:not-a-port/x"})
+        self.assertIn("invalid_input", str(ctx.exception))
+
+    def test_validate_url_unmatched_ipv6_bracket_rejected(self):
+        """Tests that a malformed IPv6 authority (unmatched bracket) raises invalid_input."""
+        with self.assertRaises(ValueError) as ctx:
+            self._call_validate_url({"url": "https://[::1/x"})
+        self.assertIn("invalid_input", str(ctx.exception))
+
     def _call_validate_hostname_safety(self, hostname: str) -> None:
         """Invoke validate_hostname_safety with the given hostname."""
         SafeFetch.validate_hostname_safety(hostname)

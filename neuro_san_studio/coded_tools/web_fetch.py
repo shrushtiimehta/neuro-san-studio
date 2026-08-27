@@ -95,6 +95,10 @@ class WebFetch(CodedTool):
 
         async with SafeFetch.open_session() as session:
             content_type, prefetched_text = await SafeFetch.get_content_type(url, session)
+            # HTTP media types are case-insensitive (RFC 9110), so normalize before
+            # applying tool policy: a server sending "Application/PDF" must still
+            # route to PDF parsing rather than be rejected as unsupported.
+            content_type = content_type.lower()
             is_pdf: bool = "application/pdf" in content_type or url.lower().endswith(".pdf")
 
             if not is_pdf and not self._is_supported_content_type(content_type):

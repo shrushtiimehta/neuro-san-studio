@@ -92,6 +92,25 @@ class TestWebFetch(TestCase):
                 asyncio.run(self.tool.async_invoke({"url": "http://example.com/img.png"}, self.sly_data))
         self.assertIn("unsupported_content_type", str(ctx.exception))
 
+    def test_uppercase_pdf_content_type_routes_to_pdf(self):
+        """Tests that a mixed-case 'Application/PDF' header still routes to PDF parsing, not rejection."""
+        with (
+            patch.object(SafeFetch, "get_content_type", new=AsyncMock(return_value=("Application/PDF", None))),
+            patch.object(SafeFetch, "fetch_pdf_text", new=AsyncMock(return_value="PDF content")) as mock_pdf,
+        ):
+            result = asyncio.run(self.tool.async_invoke({"url": "http://example.com/file"}, self.sly_data))
+        mock_pdf.assert_called_once()
+        self.assertEqual(result["content"], "PDF content")
+
+    def test_mixed_case_text_content_type_supported(self):
+        """Tests that a mixed-case 'TEXT/HTML' header is accepted rather than rejected as unsupported."""
+        with (
+            patch.object(SafeFetch, "get_content_type", new=AsyncMock(return_value=("TEXT/HTML", None))),
+            patch.object(SafeFetch, "fetch_text", new=AsyncMock(return_value="hello")),
+        ):
+            result = asyncio.run(self.tool.async_invoke({"url": "http://example.com"}, self.sly_data))
+        self.assertEqual(result["content"], "hello")
+
     def test_content_truncated_to_max_content_chars(self):
         """Tests that fetched content is truncated to the specified max_content_chars limit."""
         long_text = "x" * 1000

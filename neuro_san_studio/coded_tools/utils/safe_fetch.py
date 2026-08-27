@@ -25,6 +25,7 @@ from typing import NoReturn
 from urllib.parse import ParseResult
 from urllib.parse import urlparse
 
+import idna
 from aiohttp import ClientError
 from aiohttp import ClientResponseError
 from aiohttp import ClientSession
@@ -116,7 +117,14 @@ class SafeFetch:
         if not url:
             raise ValueError("invalid_input: No 'url' provided.")
 
-        parsed: ParseResult = urlparse(url)
+        # urlparse itself raises ValueError on some malformed authorities (e.g. an
+        # unmatched IPv6 bracket "https://[::1/"); translate it to invalid_input
+        # rather than let the raw ValueError escape the documented contract.
+        try:
+            parsed: ParseResult = urlparse(url)
+        except ValueError as exc:
+            raise ValueError(f"invalid_input: URL is malformed: {exc}") from exc
+
         if parsed.scheme not in ("http", "https"):
             raise ValueError(f"invalid_input: URL must use http or https scheme, got '{parsed.scheme}'.")
 
@@ -126,6 +134,14 @@ class SafeFetch:
         raw_hostname: str | None = parsed.hostname
         if not raw_hostname:
             raise ValueError("invalid_input: URL must include a hostname.")
+
+        # urlparse defers port validation until parsed.port is accessed, so a bad
+        # port ("https://host:not-a-port" or out of range) would otherwise slip
+        # through and fail later inside aiohttp with an untranslated ValueError.
+        try:
+            _ = parsed.port
+        except ValueError as exc:
+            raise ValueError(f"invalid_input: URL has an invalid port: {exc}") from exc
 
         # Use parsed.hostname (strips port/credentials) and enforce a strict domain
         # boundary via _hostname_matches_any (see that helper).
@@ -162,11 +178,35 @@ class SafeFetch:
         :param domains: The domain entries to test against.
         :return: True if the hostname equals or is a subdomain of any entry.
         """
+        # Compare in IDNA-ASCII form: aiohttp/yarl connect to the punycode form of a
+        # Unicode host, so a Unicode IDN spelling and its punycode domain entry (or
+        # vice versa) must be matched in the same form or a configured block/allow
+        # rule is bypassed.
+        canonical_host: str = SafeFetch._to_ascii_host(hostname)
         for domain in domains:
-            lowered: str = domain.lower()
-            if hostname == lowered or hostname.endswith("." + lowered):
+            lowered: str = SafeFetch._to_ascii_host(domain.lower())
+            if canonical_host == lowered or canonical_host.endswith("." + lowered):
                 return True
         return False
+
+    @staticmethod
+    def _to_ascii_host(host: str) -> str:
+        """
+        Return the IDNA (punycode) ASCII form of a host for domain-policy matching.
+
+        aiohttp/yarl connect to the IDNA-ASCII form of a Unicode host, so domain
+        allow/block rules must compare in that same form. Falls back to the input
+        unchanged when it is not a valid IDN (IP literals, underscore labels, empty
+        strings), which leaves ASCII inputs exactly as the raw comparison saw them
+        and defers those cases to the other checks.
+
+        :param host: The already-lower-cased host or domain entry to canonicalize.
+        :return: The IDNA-ASCII form, or the input unchanged if it cannot be encoded.
+        """
+        try:
+            return idna.encode(host, uts46=True).decode("ascii")
+        except (idna.IDNAError, UnicodeError):
+            return host
 
     @staticmethod
     def validate_hostname_safety(hostname: str) -> None:
