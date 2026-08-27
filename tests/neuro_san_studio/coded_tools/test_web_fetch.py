@@ -20,15 +20,15 @@ from unittest.mock import AsyncMock
 from unittest.mock import patch
 
 from neuro_san_studio.coded_tools.utils.safe_fetch import SafeFetch
+from neuro_san_studio.coded_tools.web_fetch import MAX_CHARS
 from neuro_san_studio.coded_tools.web_fetch import WebFetch
 
 
-class TestAsyncInvoke(TestCase):
-    """Integration-level tests for WebFetch.async_invoke with mocked helpers.
+class TestWebFetch(TestCase):
+    """Unit tests for the WebFetch coded tool.
 
-    URL validation performs no DNS lookups (DNS records are validated at connection
-    time by GlobalOnlyResolver), and the network-facing helpers are mocked, so these
-    tests never touch the network.
+    Covers async_invoke routing/truncation (with SafeFetch mocked so no network
+    is touched) and the _validate_max_content_chars parameter validation.
     """
 
     def setUp(self):
@@ -115,3 +115,51 @@ class TestAsyncInvoke(TestCase):
         with self.assertRaises(ValueError) as ctx:
             asyncio.run(self.tool.async_invoke({"url": "http://192.168.1.1/secret"}, self.sly_data))
         self.assertIn("url_not_allowed", str(ctx.exception))
+
+    def _call(self, args):
+        """Invoke _validate_max_content_chars with the given args dict and return the result."""
+        return self.tool._validate_max_content_chars(args)  # pylint: disable=protected-access
+
+    def test_default_value_used_when_absent(self):
+        """Tests that the default MAX_CHARS value is returned when max_content_chars is absent."""
+        self.assertEqual(self._call({}), MAX_CHARS)
+
+    def test_none_falls_back_to_default(self):
+        """Tests that an explicit None falls back to MAX_CHARS instead of raising."""
+        self.assertEqual(self._call({"max_content_chars": None}), MAX_CHARS)
+
+    def test_valid_positive_int(self):
+        """Tests that a valid positive integer is accepted and returned as-is."""
+        self.assertEqual(self._call({"max_content_chars": 500}), 500)
+
+    def test_zero_raises(self):
+        """Tests that zero is rejected as non-positive rather than silently defaulting."""
+        with self.assertRaises(ValueError) as ctx:
+            self._call({"max_content_chars": 0})
+        self.assertIn("invalid_input", str(ctx.exception))
+
+    def test_negative_raises(self):
+        """Tests that a negative value raises ValueError with invalid_input."""
+        with self.assertRaises(ValueError) as ctx:
+            self._call({"max_content_chars": -1})
+        self.assertIn("invalid_input", str(ctx.exception))
+
+    def test_bool_raises(self):
+        """Tests that a bool (True/False) is rejected rather than treated as 1/0."""
+        for value in (True, False):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError) as ctx:
+                    self._call({"max_content_chars": value})
+                self.assertIn("invalid_input", str(ctx.exception))
+
+    def test_string_raises(self):
+        """Tests that a string value raises ValueError with invalid_input."""
+        with self.assertRaises(ValueError) as ctx:
+            self._call({"max_content_chars": "1000"})
+        self.assertIn("invalid_input", str(ctx.exception))
+
+    def test_float_raises(self):
+        """Tests that a float value raises ValueError with invalid_input."""
+        with self.assertRaises(ValueError) as ctx:
+            self._call({"max_content_chars": 1000.0})
+        self.assertIn("invalid_input", str(ctx.exception))
