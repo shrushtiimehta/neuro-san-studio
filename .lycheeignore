@@ -41,3 +41,12 @@ https://go.dev/dl/go\$
 http://link/a
 http://link/b
 http://x/
+
+# For unit test, test_safe_fetch domain-policy fixtures (never actually fetched;
+# validate_url rejects them before any network call). lychee IDNA-normalizes hosts,
+# so these are the punycode/trailing-dot forms it derives from example.com.,
+# münchen.de and faß.de. Dots are escaped so the trailing-dot entry does not also
+# match the plain https://example.com/... URLs used elsewhere.
+https://example\.com\.
+https://xn--mnchen-3ya\.de
+https://xn--fa-hia\.de

@@ -476,6 +476,23 @@ class TestSafeFetch(TestCase):  # pylint: disable=too-many-public-methods
                     self._call_validate_hostname_safety(hostname)
                 self.assertIn("url_not_allowed", str(ctx.exception))
 
+    def test_validate_hostname_safety_malformed_chars_rejected(self):
+        """Tests that a genuine hostname with characters invalid in a DNS name is rejected.
+
+        IDNA cannot canonicalize a host containing a space or '$', so _to_ascii_host
+        leaves it unchanged; it must surface as invalid_input rather than pass through
+        and fail later inside aiohttp with an off-contract error.
+        """
+        for hostname in ("exa mple.com", "ex$mple.com"):
+            with self.subTest(hostname=hostname):
+                with self.assertRaises(ValueError) as ctx:
+                    self._call_validate_hostname_safety(hostname)
+                self.assertIn("invalid_input", str(ctx.exception))
+
+    def test_validate_hostname_safety_underscore_label_allowed(self):
+        """Tests that underscore labels are tolerated (aiohttp/yarl accept them), not over-rejected."""
+        self._call_validate_hostname_safety("a_b.example.com")  # should not raise
+
     def _call_validate_domain_list(self, value, param_name="test_param"):
         """Invoke validate_domain_list with the given value and return the result."""
         return SafeFetch.validate_domain_list(value, param_name)

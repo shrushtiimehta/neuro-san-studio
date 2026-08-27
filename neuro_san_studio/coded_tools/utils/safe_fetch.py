@@ -44,6 +44,10 @@ MAX_RESPONSE_BYTES: int = 10 * 1024 * 1024  # 10 MB
 # Read size per iteration when streaming a response body.
 DOWNLOAD_CHUNK_BYTES: int = 64 * 1024
 TIMEOUT_SECONDS: int = 15
+# Characters permitted in a canonical (post-IDNA, lower-cased) DNS hostname. IP
+# literals are validated separately; a genuine hostname containing anything outside
+# this set means IDNA could not canonicalize it and it is not a usable DNS name.
+HOSTNAME_ALLOWED_CHARS: frozenset[str] = frozenset("abcdefghijklmnopqrstuvwxyz0123456789.-_")
 
 
 class SafeFetch:
@@ -236,7 +240,9 @@ class SafeFetch:
 
         :param hostname: The already-lower-cased host to check.
         :raises ValueError: url_not_allowed when the host is localhost, an
-                unparseable/zoned/shorthand IP literal, or a non-global IP literal.
+                unparseable/zoned/shorthand IP literal, or a non-global IP literal;
+                invalid_input when a genuine hostname holds characters that are not
+                valid in a DNS name (IDNA could not canonicalize it).
         """
         if hostname == "localhost" or hostname.endswith(".localhost"):
             raise ValueError(f"url_not_allowed: Host '{hostname}' targets a loopback address.")
@@ -267,8 +273,17 @@ class SafeFetch:
                 raise ValueError(
                     f"url_not_allowed: Host '{hostname}' is an unsupported IP-literal form."
                 ) from parse_exc
-            # A genuine hostname; GlobalOnlyResolver validates its DNS records at
-            # connection time.
+            # A genuine (non-IP) hostname. If IDNA could not canonicalize it,
+            # _to_ascii_host returned it unchanged, so reject any host still holding
+            # characters invalid in a DNS name (e.g. a space or '$'): that is a
+            # malformed URL and must surface as invalid_input here rather than fail
+            # later inside aiohttp/yarl with an off-contract error. Otherwise
+            # GlobalOnlyResolver validates its DNS records at connection time.
+            for char in hostname:
+                if char not in HOSTNAME_ALLOWED_CHARS:
+                    raise ValueError(
+                        f"invalid_input: Host '{hostname}' contains characters that are not valid in a hostname."
+                    ) from parse_exc
             return
 
         GlobalOnlyResolver.ensure_global_address(hostname, addr)
