@@ -25,6 +25,7 @@ from typing import NoReturn
 from urllib.parse import ParseResult
 from urllib.parse import urlparse
 
+import idna
 from aiohttp import ClientError
 from aiohttp import ClientResponseError
 from aiohttp import ClientSession
@@ -196,10 +197,10 @@ class SafeFetch:
         """
         Return the IDNA (punycode) ASCII form of a host for domain-policy matching.
 
-        aiohttp/yarl connect to the IDNA-ASCII form of a Unicode host, so domain
-        allow/block rules must compare in that same form. Uses the standard-library
-        "idna" codec (no third-party dependency). Falls back to the input unchanged
-        when it cannot be encoded (IP literals, over-long or invalid labels), which
+        aiohttp/yarl connect to the IDNA-ASCII form of a Unicode host, and yarl uses
+        this same "idna" package, so matching in its UTS#46 form gives exact parity
+        with what the request targets. Falls back to the input unchanged when it
+        cannot be encoded (IP literals, underscore labels, invalid IDN input), which
         leaves ASCII inputs exactly as the raw comparison saw them and defers those
         cases to the other checks.
 
@@ -207,8 +208,8 @@ class SafeFetch:
         :return: The IDNA-ASCII form, or the input unchanged if it cannot be encoded.
         """
         try:
-            return host.encode("idna").decode("ascii")
-        except UnicodeError:
+            return idna.encode(host, uts46=True).decode("ascii")
+        except (idna.IDNAError, UnicodeError):
             return host
 
     @staticmethod

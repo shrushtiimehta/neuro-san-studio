@@ -356,6 +356,17 @@ class TestSafeFetch(TestCase):  # pylint: disable=too-many-public-methods
             self._call_validate_url({"url": "https://example.com/x", "blocked_domains": ["example.com."]})
         self.assertIn("url_not_allowed", str(ctx.exception))
 
+    def test_validate_url_uts46_mapping_matches_yarl(self):
+        """Tests that canonicalization uses UTS#46 (like yarl), not IDNA2003.
+
+        IDNA2003 maps 'faß.de' to 'fass.de', but aiohttp/yarl connect to
+        'xn--fa-hia.de'; a UTS#46 block entry in that punycode form must therefore
+        block the Unicode host, which IDNA2003 would let bypass.
+        """
+        with self.assertRaises(ValueError) as ctx:
+            self._call_validate_url({"url": "https://faß.de/x", "blocked_domains": ["xn--fa-hia.de"]})
+        self.assertIn("url_not_allowed", str(ctx.exception))
+
     def _call_validate_hostname_safety(self, hostname: str) -> None:
         """Invoke validate_hostname_safety with the given hostname."""
         SafeFetch.validate_hostname_safety(hostname)

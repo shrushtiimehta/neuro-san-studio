@@ -95,13 +95,14 @@ class WebFetch(CodedTool):
 
         async with SafeFetch.open_session() as session:
             content_type, prefetched_text = await SafeFetch.get_content_type(url, session)
-            # HTTP media types are case-insensitive (RFC 9110), so normalize before
-            # applying tool policy: a server sending "Application/PDF" must still
-            # route to PDF parsing rather than be rejected as unsupported.
-            content_type = content_type.lower()
-            is_pdf: bool = "application/pdf" in content_type or url.lower().endswith(".pdf")
+            # Route on the base media type only, case-insensitively (RFC 9110). A
+            # parameter such as "; charset=..." or "; profile=text/plain" must not
+            # affect the decision, and substring matching would misclassify types
+            # like "image/png; profile=text/plain" or "application/x-text/plain".
+            base_type: str = content_type.split(";", 1)[0].strip().lower()
+            is_pdf: bool = base_type == "application/pdf" or url.lower().endswith(".pdf")
 
-            if not is_pdf and not self._is_supported_content_type(content_type):
+            if not is_pdf and not self._is_supported_content_type(base_type):
                 raise ValueError(
                     f"unsupported_content_type: Content type '{content_type}' is not supported. "
                     "Only text/HTML and PDF are accepted."
@@ -130,17 +131,18 @@ class WebFetch(CodedTool):
         }
 
     @staticmethod
-    def _is_supported_content_type(content_type: str) -> bool:
+    def _is_supported_content_type(base_type: str) -> bool:
         """
-        Report whether a Content-Type matches one of the supported text/PDF types.
+        Report whether a base media type is exactly one of the supported text/PDF types.
 
-        :param content_type: The raw Content-Type header value (may include params).
-        :return: True if any SUPPORTED_CONTENT_TYPES entry appears in the value.
+        Exact membership (not substring) is required so an unsupported type that merely
+        contains a supported token — e.g. "application/x-text/plain", or a parameter
+        like "image/png; profile=text/plain" once reduced to its base — is rejected.
+
+        :param base_type: The base media type with parameters removed, lower-cased.
+        :return: True if base_type is exactly one of SUPPORTED_CONTENT_TYPES.
         """
-        for supported in SUPPORTED_CONTENT_TYPES:
-            if supported in content_type:
-                return True
-        return False
+        return base_type in SUPPORTED_CONTENT_TYPES
 
     @staticmethod
     def _validate_max_content_chars(args: dict[str, Any]) -> int:

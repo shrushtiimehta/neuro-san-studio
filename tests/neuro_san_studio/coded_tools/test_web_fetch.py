@@ -111,6 +111,19 @@ class TestWebFetch(TestCase):
             result = asyncio.run(self.tool.async_invoke({"url": "http://example.com"}, self.sly_data))
         self.assertEqual(result["content"], "hello")
 
+    def test_supported_token_in_parameter_still_unsupported(self):
+        """Tests that a supported token appearing only in a parameter does not make a type supported.
+
+        'image/png; profile="text/plain"' reduces to base type image/png and must be
+        rejected, guarding against the old substring match that accepted it.
+        """
+        with patch.object(
+            SafeFetch, "get_content_type", new=AsyncMock(return_value=('image/png; profile="text/plain"', None))
+        ):
+            with self.assertRaises(ValueError) as ctx:
+                asyncio.run(self.tool.async_invoke({"url": "http://example.com/img"}, self.sly_data))
+        self.assertIn("unsupported_content_type", str(ctx.exception))
+
     def test_content_truncated_to_max_content_chars(self):
         """Tests that fetched content is truncated to the specified max_content_chars limit."""
         long_text = "x" * 1000
