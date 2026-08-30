@@ -43,6 +43,8 @@ class WebFetch(CodedTool):
     """
     CodedTool implementation that fetches a URL and returns its plain-text body.
 
+    XML and feed responses are returned as extracted text; raw XML markup is not preserved.
+
     All validation and network access is delegated to the shared SSRF-hardened
     fetch path (SafeFetch): private/loopback/reserved hosts are rejected,
     DNS records are validated at connection time by GlobalOnlyResolver
@@ -57,7 +59,7 @@ class WebFetch(CodedTool):
                                     or returns a redirect.
         url_not_accessible       – HTTP error or network failure while fetching the page.
         too_many_requests        – Server returned HTTP 429.
-        unsupported_content_type: Content type is not an approved text, XML, feed, HTML, or PDF type.
+        unsupported_content_type – Content type is not an approved text, XML, feed, HTML, or PDF type.
         response_too_large       – Content-Length header or streamed body (text or PDF) exceeds the byte limit.
     """
 
