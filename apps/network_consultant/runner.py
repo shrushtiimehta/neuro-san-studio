@@ -83,7 +83,7 @@ from neuro_san.client.streaming_input_processor import StreamingInputProcessor  
 from neuro_san.test.driver.data_driven_agent_test_driver import DataDrivenAgentTestDriver  # noqa: E402
 from neuro_san.test.unittest.unit_test_assert_forwarder import UnitTestAssertForwarder  # noqa: E402
 
-from coded_tools.agent_network_consultant_editor.network_scratchpad import clear_for_hocon_file  # noqa: E402
+from coded_tools.agent_network_consultant.network_scratchpad import clear_for_hocon_file  # noqa: E402
 
 # Not __name__: this module runs as "__main__" via `python -m`, which would otherwise
 # produce an unhelpful logger name.
@@ -96,7 +96,7 @@ logger = logging.getLogger("network_consultant")
 
 API_KEY_ERROR_MARKER = "API KEY error detected"
 
-# Matches coded_tools/agent_network_consultant_editor/read_thinking_trace.py's THINKING_DIR
+# Matches coded_tools/agent_network_consultant/read_thinking_trace.py's THINKING_DIR
 # and the "--- <agent_origin> ---" section headers it parses.
 IMPROVEMENT_THINKING_DIR = os.path.join("logs", "thinking_dir", "improvement")
 

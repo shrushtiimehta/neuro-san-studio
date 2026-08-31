@@ -304,7 +304,7 @@ After the call:
         },
         {
             "name": "read_thinking_trace",
-            "class": "coded_tools.agent_network_consultant_editor.read_thinking_trace.ReadThinkingTrace",
+            "class": "coded_tools.agent_network_consultant.read_thinking_trace.ReadThinkingTrace",
             "function": {
                 "description": "Read the saved per-agent reasoning trace for a failing fixture. Call with no agent_name to list which agents have a trace; call again with agent_name to read that agent's full trace.",
                 "parameters": {
@@ -326,7 +326,7 @@ After the call:
 
         {
             "name": "read_job_log",
-            "class": "coded_tools.agent_network_consultant_editor.read_thinking_trace.ReadJobLog",
+            "class": "coded_tools.agent_network_consultant.read_thinking_trace.ReadJobLog",
             "function": {
                 "description": "Read the tail of the current job's own raw log -- round-level context (iteration progress, which fixtures passed/failed this round, any traceback) rather than one fixture's own trace.",
                 "parameters": {
@@ -343,7 +343,7 @@ After the call:
 
         {
             "name": "network_scratchpad",
-            "class": "coded_tools.agent_network_consultant_editor.network_scratchpad.NetworkScratchpad",
+            "class": "coded_tools.agent_network_consultant.network_scratchpad.NetworkScratchpad",
             "function": {
                 "description": "Cross-round scratchpad of what's already been tried on this network this run (cleared before every fresh run, so it never carries over from an unrelated one). Read it first, before deciding a fix, to avoid repeating an attempt that already failed -- reading also clears it. After deciding your fix, write one line summarizing what you tried and the outcome, so a later round builds on it instead of repeating it.",
                 "parameters": {
